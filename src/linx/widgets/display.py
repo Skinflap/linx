@@ -10,7 +10,7 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib, Gio
 
 from ..protocol import WIDTH, HEIGHT
-from ..content import encode_h264, generate_solid_h264, generate_matrix_h264, make_png
+from ..content import encode_h264, generate_solid_h264, generate_matrix_h264
 from ..ambilight import AmbilightThread, play_h264_with_ambilight, sample_edge_colors
 
 MODES = ['Image', 'Video', 'Color', 'Matrix']
@@ -220,29 +220,17 @@ class DisplayGroup(Adw.PreferencesGroup):
 
         def _worker():
             try:
-                # 1. Wait for any previous playback to fully exit
                 if old_thread and old_thread.is_alive():
-                    print(f"[display] stopping old thread...", flush=True)
                     lcd.request_stop()
                     old_thread.join(timeout=10)
-                    alive = old_thread.is_alive()
-                    print(f"[display] old thread done (still alive: {alive})", flush=True)
 
-                # 2. Now we own the device exclusively -- stop and clear
-                print("[display] sending stop_play...", flush=True)
-                resp = lcd.stop_play()
-                print(f"[display] stop_play response: {resp}", flush=True)
-                print("[display] sending clear_layers...", flush=True)
+                lcd.stop_play()
                 lcd.clear_layers()
-                print("[display] clear done", flush=True)
 
-                # 3. Clean up previous temp file
                 if self._temp_file and os.path.exists(self._temp_file):
                     os.unlink(self._temp_file)
                     self._temp_file = None
 
-                # 4. Start new content
-                print(f"[display] init + prepare for mode {mode}...", flush=True)
                 lcd.init()
                 lcd.prepare_display()
 
@@ -255,9 +243,6 @@ class DisplayGroup(Adw.PreferencesGroup):
                 elif mode == 3:
                     self._do_matrix(lcd, args)
             except Exception as e:
-                print(f"[display] ERROR: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
                 GLib.idle_add(self.window.show_toast, str(e))
                 GLib.idle_add(self._set_playing, False)
 
@@ -292,22 +277,16 @@ class DisplayGroup(Adw.PreferencesGroup):
 
     def _do_image(self, lcd, args):
         from PIL import Image
-        print(f"[display] loading image: {args['path']}", flush=True)
         img = Image.open(args['path']).convert('RGB')
         img = img.resize((WIDTH, HEIGHT), Image.LANCZOS)
-        print(f"[display] resized to {img.size}", flush=True)
 
         if args['use_ambi']:
             colors = sample_edge_colors(img)
             args['led'].set_leds(colors)
-            print("[display] ambilight set", flush=True)
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
-        png_data = buf.getvalue()
-        print(f"[display] pushing PNG ({len(png_data)} bytes)...", flush=True)
-        resp = lcd.push_png(png_data)
-        print(f"[display] push_png response: {resp}", flush=True)
+        lcd.push_png(buf.getvalue())
         GLib.idle_add(self._set_playing, False)
 
     def _do_video(self, lcd, args):

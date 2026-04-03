@@ -1,6 +1,5 @@
 """Configuration loading -- merges system and user TOML configs."""
 
-import os
 import tomllib
 from pathlib import Path
 

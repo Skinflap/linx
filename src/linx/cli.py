@@ -10,7 +10,7 @@ from .protocol import LCD_VID, LCD_PID, HID_VID, HID_PID, LED_VID, LED_PID, WIDT
 from .device import LCDDevice, LEDDevice
 from .wake import wake_from_desktop
 from .ambilight import sample_edge_colors, AmbilightThread, play_h264_with_ambilight
-from .content import encode_h264, generate_solid_h264, generate_matrix_h264, make_png
+from .content import encode_h264, generate_solid_h264, generate_matrix_h264
 from .config import load_config
 
 import usb.core
@@ -82,10 +82,6 @@ Examples:
     p = sub.add_parser('upload', help='Upload file to device filesystem')
     p.add_argument('file', help='Local file to upload')
     p.add_argument('target', help='Device path (e.g. /usr/data/boot.jpg)')
-
-    p = sub.add_parser('clear', help='Clear display (test H.264 framebuffer reset strategies)')
-    p.add_argument('strategy', type=int, choices=[1, 2, 3, 4, 5, 6], nargs='?', default=0,
-                   help='Strategy: 1=SWITCH_DESKTOP, 2=black JPG, 3=black H.264, 4=JPG+PNG combo, 5=REBOOT, 6=full reinit')
 
     args = parser.parse_args()
     if not args.command:
@@ -238,22 +234,6 @@ Examples:
             lcd.stop_play()
             lcd.clear_layers()
             print("Stopped")
-
-        elif args.command == 'clear':
-            if args.strategy == 0:
-                print("Clear strategies (test each after H.264 playback):")
-                print("  linx clear 1  -- CMD_SWITCH_DESKTOP firmware command (150)")
-                print("  linx clear 2  -- stop + black JPEG via CMD_PUSH_JPG")
-                print("  linx clear 3  -- stop + single-frame black H.264")
-                print("  linx clear 4  -- stop + JPG + PNG layer combo")
-                print("  linx clear 5  -- CMD_REBOOT (nuclear, needs 'linx wake' after)")
-                print("  linx clear 6  -- Full reinit (lian-li-linux sequence)")
-                print()
-                print("Run 'linx matrix' or 'linx play <file>' first, Ctrl+C to stop,")
-                print("then run 'linx clear N' to test if strategy N clears the frozen frame.")
-            else:
-                result = lcd.clear_display(args.strategy)
-                print(f"Result: {result}")
 
         elif args.command == 'upload':
             with open(args.file, 'rb') as f:

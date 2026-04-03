@@ -70,7 +70,7 @@ class LinxWindow(Adw.ApplicationWindow):
     def do_close_request(self):
         """Clean up devices on window close."""
         if self.lcd:
-            if self.lcd._stop is False and self.lcd.dev:
+            if not self.lcd._stop and self.lcd.dev:
                 self.lcd.request_stop()
             try:
                 self.lcd.close()

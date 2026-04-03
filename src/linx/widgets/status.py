@@ -6,9 +6,6 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib
 
 import threading
-import usb.core
-
-from ..protocol import LCD_VID, LCD_PID, HID_VID, HID_PID, LED_VID, LED_PID
 
 
 class StatusGroup(Adw.PreferencesGroup):
