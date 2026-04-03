@@ -1,0 +1,16 @@
+post_install() {
+    udevadm control --reload-rules
+    udevadm trigger
+    echo ">>> Unplug and replug the Lian Li screen, or reboot."
+    echo ">>> Start the service: systemctl --user enable --now linx"
+}
+
+post_upgrade() {
+    udevadm control --reload-rules
+    udevadm trigger
+}
+
+post_remove() {
+    udevadm control --reload-rules
+    udevadm trigger
+}

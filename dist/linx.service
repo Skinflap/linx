@@ -1,0 +1,22 @@
+[Unit]
+Description=Linx -- Lian Li LCD Screen Driver
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/linx matrix
+ExecStop=/usr/bin/linx stop
+Restart=on-failure
+RestartSec=5
+Environment=HOME=%h
+
+# Override the default command via drop-in:
+#   systemctl --user edit linx
+# Then set:
+#   [Service]
+#   ExecStart=
+#   ExecStart=/usr/bin/linx play /path/to/video.mp4
+
+[Install]
+WantedBy=graphical-session.target

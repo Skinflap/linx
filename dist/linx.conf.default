@@ -1,0 +1,20 @@
+# Linx configuration
+# System-wide: /etc/linx.conf
+# User override: ~/.config/linx/config.toml
+
+[display]
+brightness = 80          # 0-100
+# rotation = 0           # 0-3
+
+[matrix]
+duration = 60            # seconds of pre-rendered animation
+fps = 30
+
+[ambilight]
+enabled = false
+grayscale_max = 0        # 0 = full color, 1-255 = grayscale capped
+
+# [service]
+# mode = "matrix"        # default mode for systemd service
+# file = ""              # file path for play/image modes
+# color = "red"          # color for color mode

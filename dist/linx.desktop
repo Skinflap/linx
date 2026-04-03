@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Linx
+Comment=Lian Li 8.8" Universal Screen Control
+Exec=linx-gui
+Icon=linx
+Type=Application
+Terminal=false
+Categories=Utility;HardwareSettings;

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+*.whl
+.venv/
+src/linx/assets/

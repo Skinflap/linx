@@ -1,0 +1,11 @@
+# Linx -- Lian Li 8.8" Universal LCD Screen
+# Grants USB access to the locally logged-in user via uaccess
+
+# LCD -- TI MCU (monitor mode)
+SUBSYSTEM=="usb", ATTR{idVendor}=="1cbe", ATTR{idProduct}=="a088", TAG+="uaccess"
+
+# LCD -- WCH HID (desktop/standby mode)
+SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="ad21", TAG+="uaccess"
+
+# LED ring controller
+SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="8050", TAG+="uaccess"

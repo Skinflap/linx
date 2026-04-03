@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linx"
+version = "1.0.0"
+description = "Linux driver for the Lian Li 8.8\" Universal LCD Screen"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Unlicense"
+authors = [{name = "Mitchell"}]
+dependencies = [
+    "pyusb>=1.2",
+    "pycryptodome>=3.19",
+    "Pillow>=10.0",
+    # ffmpeg: required for video encoding -- system package, not pip-installable
+]
+
+[project.optional-dependencies]
+# libadwaita is a system package (python-gobject wraps it) -- install via pacman
+gui = ["PyGObject>=3.44"]
+
+[project.scripts]
+linx = "linx.cli:main"
+
+[project.gui-scripts]
+linx-gui = "linx.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
