@@ -5,4 +5,4 @@ build/
 *.whl
 .venv/
 src/linx/assets/
-.kru-lock
+*.lock
