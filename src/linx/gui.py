@@ -1,4 +1,4 @@
-"""Linx GUI -- GTK4 + libadwaita control panel for the Lian Li 8.8" screen."""
+# linx gui -- gtk4 + libadwaita control panel
 
 import sys
 
@@ -7,6 +7,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib
 
+from .config import load_config, save_config
 from .widgets.status import StatusGroup
 from .widgets.display import DisplayGroup
 from .widgets.led import LEDGroup
@@ -19,8 +20,8 @@ class LinxWindow(Adw.ApplicationWindow):
         super().__init__(application=app, title='Linx', default_width=480, default_height=720)
         self.lcd = None
         self.led = None
+        self._config = load_config()
 
-        # -- Layout --
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
         toolbar.add_top_bar(header)
@@ -38,11 +39,10 @@ class LinxWindow(Adw.ApplicationWindow):
         box.set_margin_end(12)
         scroll.set_child(box)
 
-        # -- Widget groups --
         self.status_group = StatusGroup(self)
         box.append(self.status_group)
 
-        self.display_group = DisplayGroup(self)
+        self.display_group = DisplayGroup(self, config=self._config)
         box.append(self.display_group)
 
         self.led_group = LEDGroup(self)
@@ -52,12 +52,12 @@ class LinxWindow(Adw.ApplicationWindow):
         box.append(self.service_group)
 
         self.set_content(toolbar)
-
-        # Start with display/led controls dimmed
         self.on_connection_changed()
 
+        # restore previous state after widgets are built
+        self.display_group.restore_state()
+
     def on_connection_changed(self):
-        """Called when device connection state changes."""
         lcd_ok = self.lcd is not None and self.lcd.dev is not None
         led_ok = self.led is not None and self.led.dev is not None
         self.display_group.set_sensitive_all(lcd_ok)
@@ -68,7 +68,16 @@ class LinxWindow(Adw.ApplicationWindow):
         self.toast_overlay.add_toast(toast)
 
     def do_close_request(self):
-        """Clean up devices on window close."""
+        # save gui state
+        try:
+            state = self.display_group.get_state()
+            from .config import _deep_merge
+            merged = _deep_merge(self._config, state)
+            save_config(merged)
+        except Exception:
+            pass
+
+        # clean up devices
         if self.lcd:
             if not self.lcd._stop and self.lcd.dev:
                 self.lcd.request_stop()
@@ -82,7 +91,7 @@ class LinxWindow(Adw.ApplicationWindow):
                 self.led.close()
             except Exception:
                 pass
-        return False  # allow close
+        return False
 
 
 class LinxApp(Adw.Application):

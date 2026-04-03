@@ -1,4 +1,4 @@
-"""CLI entry point for the Linx driver."""
+# cli entry point
 
 import io
 import os
@@ -50,8 +50,8 @@ Examples:
     p.add_argument('--no-loop', action='store_true', help='Play once instead of looping')
     p.add_argument('--ambilight', '-a', action='store_true',
                    help='Sync LED ring to video edges')
-    p.add_argument('--grayscale', '-g', type=int, default=0, metavar='MAX',
-                   help='Ambilight grayscale mode: max brightness 1-255 (e.g. -g 2)')
+    p.add_argument('--led-brightness', type=int, default=100, metavar='0-100',
+                   help='LED ring brightness percentage (default: 100)')
 
     p = sub.add_parser('color', help='Display a solid color')
     p.add_argument('color', metavar='COLOR',
@@ -134,9 +134,8 @@ Examples:
         print("  Try: linx wake")
         sys.exit(1)
 
-    # Connect LED for ambilight if requested (--grayscale implies --ambilight)
-    grayscale_max = getattr(args, 'grayscale', 0) or config['ambilight']['grayscale_max']
-    use_ambilight = getattr(args, 'ambilight', False) or config['ambilight']['enabled'] or grayscale_max > 0
+    use_ambilight = getattr(args, 'ambilight', False) or config['ambilight']['enabled']
+    led_brightness = getattr(args, 'led_brightness', 100) / 100.0
     led = None
     if use_ambilight:
         led = LEDDevice()
@@ -171,10 +170,11 @@ Examples:
                 colors = sample_edge_colors(img)
                 led.set_leds(colors)
             buf = io.BytesIO()
-            img.save(buf, format='PNG')
-            png_data = buf.getvalue()
-            print(f"Pushing {args.file} ({len(png_data)} bytes, {WIDTH}x{HEIGHT})...")
-            resp = lcd.push_png(png_data)
+            img.save(buf, format='JPEG', quality=95)
+            jpg_data = buf.getvalue()
+            print(f"Pushing {args.file} ({len(jpg_data)} bytes, {WIDTH}x{HEIGHT})...")
+            from .protocol import CMD_PUSH_JPG
+            resp = lcd.push_image(jpg_data, CMD_PUSH_JPG)
             print("Done" if resp else "No response")
 
         elif args.command == 'play':
@@ -190,7 +190,7 @@ Examples:
             if use_ambilight:
                 play_h264_with_ambilight(lcd, led, filepath,
                                          loop=not args.no_loop,
-                                         grayscale_max=grayscale_max)
+                                         brightness=led_brightness)
             else:
                 lcd.play_h264(filepath, loop=not args.no_loop)
             if not args.file.endswith('.h264'):
@@ -199,13 +199,14 @@ Examples:
         elif args.command == 'color':
             lcd.init()
             lcd.prepare_display()
+            from .content import make_solid_jpeg, parse_color
+            from .protocol import CMD_PUSH_JPG
+            rgb = parse_color(args.color)
             if use_ambilight and args.color in LED_COLORS:
                 led.set_all(*LED_COLORS[args.color])
-            h264 = generate_solid_h264(args.color)
-            try:
-                lcd.play_h264(h264, loop=True)
-            finally:
-                os.unlink(h264)
+            jpg = make_solid_jpeg(color=rgb)
+            lcd.push_image(jpg, CMD_PUSH_JPG)
+            print(f"Color: {args.color}")
 
         elif args.command == 'matrix':
             lcd.init()

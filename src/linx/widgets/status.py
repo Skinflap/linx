@@ -1,4 +1,4 @@
-"""Connection status and device info."""
+# connection status and device info
 
 import gi
 gi.require_version('Gtk', '4.0')

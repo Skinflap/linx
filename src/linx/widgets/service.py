@@ -1,4 +1,4 @@
-"""Systemd user service control for linx.service."""
+# systemd user service control
 
 import subprocess
 import threading

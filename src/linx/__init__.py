@@ -1,6 +1,4 @@
-"""Linx -- Linux driver for the Lian Li 8.8" Universal Screen."""
-
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from .protocol import WIDTH, HEIGHT
 from .device import LCDDevice, LEDDevice

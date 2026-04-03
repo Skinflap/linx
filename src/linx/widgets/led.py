@@ -1,4 +1,4 @@
-"""LED ring controls -- color picker, ambilight, grayscale."""
+# led ring controls -- color, brightness, ambilight
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -7,13 +7,12 @@ from gi.repository import Gtk, Adw, Gdk
 
 
 class LEDGroup(Adw.PreferencesGroup):
-    """LED ring color, ambilight toggle, grayscale max."""
 
     def __init__(self, window):
         super().__init__(title='LED Ring')
         self.window = window
 
-        # -- Color picker --
+        # -- color picker --
         self.color_row = Adw.ActionRow(title='Color')
         self._rgba = Gdk.RGBA()
         self._rgba.parse('red')
@@ -35,17 +34,25 @@ class LEDGroup(Adw.PreferencesGroup):
         self.color_row.add_suffix(self.off_btn)
         self.add(self.color_row)
 
-        # -- Ambilight toggle --
+        # -- brightness --
+        self.brightness_row = Adw.ActionRow(title='LED Brightness')
+        self.brightness_scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.brightness_scale.set_value(100)
+        self.brightness_scale.set_hexpand(True)
+        self.brightness_scale.set_valign(Gtk.Align.CENTER)
+        self.brightness_scale.set_size_request(200, -1)
+        self.brightness_row.add_suffix(self.brightness_scale)
+        self.add(self.brightness_row)
+
+        # -- ambilight toggle --
         self.ambilight_row = Adw.SwitchRow(title='Ambilight',
                                             subtitle='Sync LEDs to screen edges during playback')
         self.add(self.ambilight_row)
 
-        # -- Grayscale max --
-        self.grayscale_row = Adw.SpinRow.new_with_range(0, 255, 1)
-        self.grayscale_row.set_title('Grayscale max')
-        self.grayscale_row.set_subtitle('0 = full color, 1-255 = grayscale brightness cap')
-        self.grayscale_row.set_value(0)
-        self.add(self.grayscale_row)
+    def get_brightness(self):
+        """0.0 - 1.0 brightness scalar"""
+        return self.brightness_scale.get_value() / 100.0
 
     def _get_rgb(self):
         rgba = self.color_btn.get_rgba()
@@ -57,16 +64,15 @@ class LEDGroup(Adw.PreferencesGroup):
             self.window.show_toast('LED device not connected')
             return
         r, g, b = self._get_rgb()
-        led.set_all(r, g, b)
+        bri = self.get_brightness()
+        led.set_all(int(r * bri), int(g * bri), int(b * bri))
 
     def _on_off(self, btn):
         led = self.window.led
         if not led or not led.dev:
-            self.window.show_toast('LED device not connected')
             return
         led.off()
 
     def set_sensitive_all(self, sensitive):
-        """Enable/disable based on LED connection."""
         self.apply_btn.set_sensitive(sensitive)
         self.off_btn.set_sensitive(sensitive)

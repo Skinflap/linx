@@ -1,4 +1,4 @@
-"""Configuration loading -- merges system and user TOML configs."""
+# config loading -- merges system + user toml files
 
 import tomllib
 from pathlib import Path
@@ -24,11 +24,18 @@ DEFAULTS = {
         'file': '',
         'color': 'red',
     },
+    'gui': {
+        'mode': 0,
+        'image_path': '',
+        'video_path': '',
+        'color': 0,
+        'loop': True,
+        'image_rotation': 0,
+    },
 }
 
 
 def _deep_merge(base, override):
-    """Merge override into base, recursing into dicts."""
     result = dict(base)
     for key, val in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(val, dict):
@@ -39,11 +46,7 @@ def _deep_merge(base, override):
 
 
 def load_config(path=None):
-    """Load config from system + user files, with optional explicit path override.
-
-    Priority (highest wins): explicit path > user config > system config > defaults.
-    Missing files are silently skipped -- everything has defaults.
-    """
+    """priority: explicit path > user config > system config > defaults"""
     config = dict(DEFAULTS)
 
     for cfg_path in [SYSTEM_CONFIG, USER_CONFIG]:
@@ -51,8 +54,8 @@ def load_config(path=None):
             try:
                 with open(cfg_path, 'rb') as f:
                     config = _deep_merge(config, tomllib.load(f))
-            except (tomllib.TOMLDecodeError, OSError) as e:
-                print(f"Warning: failed to load {cfg_path}: {e}")
+            except (tomllib.TOMLDecodeError, OSError):
+                pass
 
     if path:
         p = Path(path)
@@ -60,17 +63,14 @@ def load_config(path=None):
             try:
                 with open(p, 'rb') as f:
                     config = _deep_merge(config, tomllib.load(f))
-            except (tomllib.TOMLDecodeError, OSError) as e:
-                print(f"Warning: failed to load {p}: {e}")
+            except (tomllib.TOMLDecodeError, OSError):
+                pass
 
     return config
 
 
 def save_config(config, path=None):
-    """Write config dict as TOML to the user config file.
-
-    Only writes sections/keys that differ from DEFAULTS.
-    """
+    """write non-default values to user config"""
     target = Path(path) if path else USER_CONFIG
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -87,7 +87,8 @@ def save_config(config, path=None):
                 elif isinstance(val, int):
                     section_lines.append(f'{key} = {val}')
                 elif isinstance(val, str):
-                    section_lines.append(f'{key} = "{val}"')
+                    escaped = val.replace('\\', '\\\\').replace('"', '\\"')
+                    section_lines.append(f'{key} = "{escaped}"')
         if section_lines:
             lines.append(f'[{section}]')
             lines.extend(section_lines)

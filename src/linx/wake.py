@@ -1,4 +1,4 @@
-"""USB mode switching -- wake device from desktop/standby mode."""
+# usb mode switching -- wake device from desktop/standby mode
 
 import time
 import usb.core
@@ -8,14 +8,7 @@ from .protocol import HID_VID, HID_PID, LCD_VID, LCD_PID, MONITOR_MODE_CMD
 
 
 def wake_from_desktop():
-    """Send SetMonitorMode to WCH HID device to wake the TI MCU.
-
-    The device has two mutually exclusive USB modes:
-    - Desktop mode: WCH HID (1a86:ad21) -- standby, only accepts wake command
-    - Monitor mode: TI MCU (1cbe:a088) -- full display control
-
-    Returns True if the TI MCU enumerated successfully.
-    """
+    """send SetMonitorMode to WCH HID to wake the TI MCU -- returns True on success"""
     hid = usb.core.find(idVendor=HID_VID, idProduct=HID_PID)
     if hid is None:
         return False

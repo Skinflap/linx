@@ -1,4 +1,4 @@
-"""Display controls -- brightness, content mode, play/stop."""
+# display controls -- brightness, content mode, viewport, play/stop
 
 import io
 import os
@@ -9,30 +9,34 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib, Gio
 
-from ..protocol import WIDTH, HEIGHT
-from ..content import encode_h264, generate_solid_h264, generate_matrix_h264
+from ..protocol import WIDTH, HEIGHT, CMD_PUSH_JPG
+from ..content import encode_h264, generate_solid_h264, generate_matrix_h264, make_solid_jpeg, parse_color
 from ..ambilight import AmbilightThread, play_h264_with_ambilight, sample_edge_colors
+from .viewport import ViewportEditor
 
 MODES = ['Image', 'Video', 'Color', 'Matrix']
 
 COLORS = {
-    'Red': '0xFF0000', 'Green': '0x00FF00', 'Blue': '0x0000FF',
-    'White': '0xFFFFFF', 'Black': '0x000000', 'Cyan': '0x00FFFF',
-    'Magenta': '0xFF00FF', 'Yellow': '0xFFFF00',
+    'Red': (255, 0, 0), 'Green': (0, 255, 0), 'Blue': (0, 0, 255),
+    'White': (255, 255, 255), 'Black': (0, 0, 0), 'Cyan': (0, 255, 255),
+    'Magenta': (255, 0, 255), 'Yellow': (255, 255, 0),
 }
 
 
 class DisplayGroup(Adw.PreferencesGroup):
-    """Brightness slider, content mode picker, mode-specific controls, play/stop."""
+    """brightness, content mode, viewport editor, play/stop"""
 
-    def __init__(self, window):
+    def __init__(self, window, config=None):
         super().__init__(title='Display')
         self.window = window
         self._playing = False
         self._play_thread = None
         self._temp_file = None
+        self._crop = None
+        self._rotation = 0
+        self._config = config or {}
 
-        # -- Brightness --
+        # -- brightness --
         self.brightness_row = Adw.ActionRow(title='Brightness')
         self.brightness_scale = Gtk.Scale.new_with_range(
             Gtk.Orientation.HORIZONTAL, 0, 100, 1)
@@ -44,21 +48,29 @@ class DisplayGroup(Adw.PreferencesGroup):
         self.brightness_row.add_suffix(self.brightness_scale)
         self.add(self.brightness_row)
 
-        # -- Mode selector --
+        # -- mode selector --
         self.mode_model = Gtk.StringList.new(MODES)
         self.mode_row = Adw.ComboRow(title='Mode', model=self.mode_model)
         self.mode_row.connect('notify::selected', self._on_mode_changed)
         self.add(self.mode_row)
 
-        # -- Mode-specific controls --
-        # Image
+        # -- viewport editor --
+        self.viewport_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.viewport = ViewportEditor()
+        self.viewport.set_on_crop_changed(self._on_crop_changed)
+        self.viewport.set_live_push_fn(self._live_push_to_device)
+        self.viewport_box.append(self.viewport)
+        self.add(self.viewport_box)
+
+        # -- mode-specific controls --
+        # image
         self.image_row = Adw.ActionRow(title='File')
         self.image_path = None
         self.image_btn = Gtk.Button(label='Choose...', valign=Gtk.Align.CENTER)
         self.image_btn.connect('clicked', self._on_pick_image)
         self.image_row.add_suffix(self.image_btn)
 
-        # Video
+        # video
         self.video_row = Adw.ActionRow(title='File')
         self.video_path = None
         self.video_btn = Gtk.Button(label='Choose...', valign=Gtk.Align.CENTER)
@@ -67,11 +79,11 @@ class DisplayGroup(Adw.PreferencesGroup):
 
         self.loop_row = Adw.SwitchRow(title='Loop', active=True)
 
-        # Color
+        # color
         self.color_model = Gtk.StringList.new(list(COLORS.keys()))
         self.color_row = Adw.ComboRow(title='Color', model=self.color_model)
 
-        # Matrix
+        # matrix
         self.duration_row = Adw.SpinRow.new_with_range(10, 600, 10)
         self.duration_row.set_title('Duration (s)')
         self.duration_row.set_value(60)
@@ -91,7 +103,7 @@ class DisplayGroup(Adw.PreferencesGroup):
                 self.add(row)
         self._show_mode(0)
 
-        # -- Play / Stop --
+        # -- play / stop --
         self.action_row = Adw.ActionRow(title='')
         self.play_btn = Gtk.Button(label='Play', valign=Gtk.Align.CENTER)
         self.play_btn.add_css_class('suggested-action')
@@ -113,6 +125,8 @@ class DisplayGroup(Adw.PreferencesGroup):
         for mode_idx, rows in self._mode_rows.items():
             for row in rows:
                 row.set_visible(mode_idx == idx)
+        # viewport visible for image and video modes
+        self.viewport_box.set_visible(idx in (0, 1))
 
     def _on_mode_changed(self, combo, _pspec):
         self._show_mode(combo.get_selected())
@@ -123,7 +137,22 @@ class DisplayGroup(Adw.PreferencesGroup):
             val = int(scale.get_value())
             threading.Thread(target=lcd.set_brightness, args=(val,), daemon=True).start()
 
-    # -- File pickers --
+    def _on_crop_changed(self, x, y, w, h, rotation):
+        self._crop = (x, y, w, h)
+        self._rotation = rotation
+
+    def _live_push_to_device(self, pil_image):
+        """push cropped image to device -- called from viewport live sync"""
+        lcd = self.window.lcd
+        if not lcd or not lcd.dev:
+            return
+        # always stop + clear before pushing to avoid layer bleed
+        lcd.stop_play()
+        buf = io.BytesIO()
+        pil_image.save(buf, format='JPEG', quality=85)
+        lcd.push_image(buf.getvalue(), CMD_PUSH_JPG)
+
+    # ---==<file pickers>==---
 
     def _open_file_dialog(self, title, filters, callback):
         dialog = Gtk.FileDialog(title=title)
@@ -145,8 +174,26 @@ class DisplayGroup(Adw.PreferencesGroup):
             gfile = dialog.open_finish(result)
             self.image_path = gfile.get_path()
             self.image_row.set_subtitle(os.path.basename(self.image_path))
+            # load into viewport
+            self._load_image_preview(self.image_path)
         except GLib.Error:
             pass
+
+    def _load_image_preview(self, path):
+        """load image into viewport -- thumbnail for display, full-res for device"""
+        def _work():
+            from PIL import Image
+            try:
+                full = Image.open(path).convert('RGB')
+                # thumbnail for the viewport canvas
+                preview = full.copy()
+                max_dim = 1200
+                if preview.width > max_dim or preview.height > max_dim:
+                    preview.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                GLib.idle_add(self.viewport.set_source, preview, full)
+            except Exception:
+                pass
+        threading.Thread(target=_work, daemon=True).start()
 
     def _on_pick_video(self, btn):
         f = Gtk.FileFilter()
@@ -160,10 +207,34 @@ class DisplayGroup(Adw.PreferencesGroup):
             gfile = dialog.open_finish(result)
             self.video_path = gfile.get_path()
             self.video_row.set_subtitle(os.path.basename(self.video_path))
+            # extract first frame for viewport
+            self._load_video_preview(self.video_path)
         except GLib.Error:
             pass
 
-    # -- Play / Stop --
+    def _load_video_preview(self, path):
+        """extract first frame from video for viewport preview"""
+        def _work():
+            import subprocess
+            from PIL import Image
+            try:
+                # extract one frame at low res -- fast
+                r = subprocess.run([
+                    'ffmpeg', '-i', path, '-frames:v', '1',
+                    '-f', 'image2pipe', '-vcodec', 'png', '-'
+                ], capture_output=True, timeout=10)
+                if r.returncode == 0 and r.stdout:
+                    import io
+                    img = Image.open(io.BytesIO(r.stdout)).convert('RGB')
+                    max_dim = 1200
+                    if img.width > max_dim or img.height > max_dim:
+                        img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                    GLib.idle_add(self.viewport.set_source, img)
+            except Exception:
+                pass
+        threading.Thread(target=_work, daemon=True).start()
+
+    # ---==<play / stop>==---
 
     def _set_playing(self, playing):
         self._playing = playing
@@ -175,25 +246,23 @@ class DisplayGroup(Adw.PreferencesGroup):
             self.spinner.stop()
 
     def _get_ambilight_state(self):
-        """Read ambilight settings from GTK widgets (main thread only)."""
         led = self.window.led
         use_ambi = (led and led.dev and
                     self.window.led_group.ambilight_row.get_active())
-        gs = int(self.window.led_group.grayscale_row.get_value()) if use_ambi else 0
-        return led, use_ambi, gs
+        bri = self.window.led_group.get_brightness() if use_ambi else 1.0
+        return led, use_ambi, bri
 
     def _on_play(self, btn):
-        """Start playback. Captures GTK state, then dispatches to worker thread."""
         lcd = self.window.lcd
         if not lcd or not lcd.dev:
             self.window.show_toast('Not connected')
             return
 
         mode = self.mode_row.get_selected()
-        led, use_ambi, gs = self._get_ambilight_state()
+        led, use_ambi, bri = self._get_ambilight_state()
 
-        # Capture mode-specific state from GTK widgets
-        args = {'led': led, 'use_ambi': use_ambi, 'gs': gs}
+        args = {'led': led, 'use_ambi': use_ambi, 'bri': bri,
+                'crop': self._crop}
         if mode == 0:
             if not self.image_path:
                 self.window.show_toast('No image selected')
@@ -208,14 +277,12 @@ class DisplayGroup(Adw.PreferencesGroup):
         elif mode == 2:
             color_name = list(COLORS.keys())[self.color_row.get_selected()]
             args['color_name'] = color_name
-            args['color_val'] = COLORS[color_name]
+            args['color_rgb'] = COLORS[color_name]
         elif mode == 3:
             args['duration'] = int(self.duration_row.get_value())
             args['fps'] = int(self.fps_row.get_value())
 
-        # Disable buttons, start spinner
         self._set_playing(True)
-
         old_thread = self._play_thread
 
         def _worker():
@@ -250,7 +317,6 @@ class DisplayGroup(Adw.PreferencesGroup):
         self._play_thread.start()
 
     def _on_stop(self, btn):
-        """Stop playback. Runs cleanup in background so UI doesn't freeze."""
         lcd = self.window.lcd
         if not lcd:
             return
@@ -273,27 +339,36 @@ class DisplayGroup(Adw.PreferencesGroup):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    # -- Mode implementations (all run on worker thread, device is exclusively ours) --
+    # ---==<mode implementations>==---
 
     def _do_image(self, lcd, args):
-        from PIL import Image
-        img = Image.open(args['path']).convert('RGB')
-        img = img.resize((WIDTH, HEIGHT), Image.LANCZOS)
+        # use viewport's cropped+rotated image if available
+        img = self.viewport.get_cropped_image()
+        if img is None:
+            from PIL import Image
+            img = Image.open(args['path']).convert('RGB')
+            img = img.resize((WIDTH, HEIGHT), Image.LANCZOS)
 
         if args['use_ambi']:
             colors = sample_edge_colors(img)
+            bri = args['bri']
+            if bri < 1.0:
+                colors = [(int(r*bri), int(g*bri), int(b*bri)) for r, g, b in colors]
             args['led'].set_leds(colors)
 
+        # push as jpeg to background layer -- png overlay doesn't display reliably
         buf = io.BytesIO()
-        img.save(buf, format='PNG')
-        lcd.push_png(buf.getvalue())
+        img.save(buf, format='JPEG', quality=95)
+        lcd.push_image(buf.getvalue(), CMD_PUSH_JPG)
         GLib.idle_add(self._set_playing, False)
 
     def _do_video(self, lcd, args):
         filepath = args['path']
         need_cleanup = False
         if not filepath.endswith('.h264'):
-            filepath = encode_h264(filepath)
+            rot = getattr(self, '_rotation', 0)
+            crop = self._scale_crop_for_video(filepath, rot)
+            filepath = encode_h264(filepath, crop=crop, rotation=rot)
             if not filepath:
                 GLib.idle_add(self.window.show_toast, 'Encoding failed')
                 GLib.idle_add(self._set_playing, False)
@@ -304,27 +379,26 @@ class DisplayGroup(Adw.PreferencesGroup):
 
         if args['use_ambi']:
             play_h264_with_ambilight(lcd, args['led'], filepath,
-                                     loop=args['loop'], grayscale_max=args['gs'])
+                                     loop=args['loop'], brightness=args['bri'])
         else:
             lcd.play_h264(filepath, loop=args['loop'])
 
         GLib.idle_add(self._set_playing, False)
 
     def _do_color(self, lcd, args):
+        rgb = args['color_rgb']
         if args['use_ambi']:
-            from ..protocol import LED_COLORS
-            if args['color_name'].lower() in LED_COLORS:
-                args['led'].set_all(*LED_COLORS[args['color_name'].lower()])
+            bri = args['bri']
+            args['led'].set_all(int(rgb[0]*bri), int(rgb[1]*bri), int(rgb[2]*bri))
 
-        h264 = generate_solid_h264(args['color_val'])
-        self._temp_file = h264
-        lcd.play_h264(h264, loop=True)
+        jpg = make_solid_jpeg(color=rgb)
+        lcd.push_image(jpg, CMD_PUSH_JPG)
         GLib.idle_add(self._set_playing, False)
 
     def _do_matrix(self, lcd, args):
         ambi = None
         if args['use_ambi']:
-            ambi = AmbilightThread(args['led'], grayscale_max=args['gs'])
+            ambi = AmbilightThread(args['led'], brightness=args['bri'])
             ambi.start()
 
         h264 = generate_matrix_h264(duration=args['duration'], fps=args['fps'],
@@ -333,7 +407,7 @@ class DisplayGroup(Adw.PreferencesGroup):
 
         if args['use_ambi']:
             play_h264_with_ambilight(lcd, args['led'], h264, loop=True, ambi=ambi,
-                                     grayscale_max=args['gs'])
+                                     brightness=args['bri'])
         else:
             lcd.play_h264(h264, loop=True)
 
@@ -341,7 +415,99 @@ class DisplayGroup(Adw.PreferencesGroup):
             ambi.stop()
         GLib.idle_add(self._set_playing, False)
 
+    def _scale_crop_for_video(self, video_path, rotation):
+        """scale viewport crop coords from preview space to full video dimensions"""
+        crop = self._crop
+        if not crop:
+            return None
+        # get original video dimensions
+        import subprocess
+        try:
+            r = subprocess.run([
+                'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                '-show_entries', 'stream=width,height',
+                '-of', 'csv=p=0', video_path
+            ], capture_output=True, timeout=5)
+            w, h = [int(x) for x in r.stdout.decode().strip().split(',')]
+        except Exception:
+            return None
+
+        # after rotation, video dimensions change
+        if rotation in (90, 270):
+            rot_w, rot_h = h, w
+        else:
+            rot_w, rot_h = w, h
+
+        # viewport preview dimensions (rotated source thumbnail)
+        vp_w = self.viewport._src_w
+        vp_h = self.viewport._src_h
+        if vp_w <= 0 or vp_h <= 0:
+            return None
+
+        # scale crop from preview to full rotated video, clamped to bounds
+        sx = rot_w / vp_w
+        sy = rot_h / vp_h
+        cx, cy, cw, ch = crop
+        cx = max(0, int(cx * sx))
+        cy = max(0, int(cy * sy))
+        cw = min(int(cw * sx), rot_w - cx)
+        ch = min(int(ch * sy), rot_h - cy)
+        if cw <= 0 or ch <= 0:
+            return None
+        return (cx, cy, cw, ch)
+
+    def restore_state(self):
+        """restore gui state from config -- call after widget construction"""
+        gui = self._config.get('gui', {})
+        display = self._config.get('display', {})
+
+        self.brightness_scale.set_value(display.get('brightness', 80))
+
+        mode = gui.get('mode', 0)
+        self.mode_row.set_selected(mode)
+
+        img_path = gui.get('image_path', '')
+        if img_path and os.path.exists(img_path):
+            self.image_path = img_path
+            self.image_row.set_subtitle(os.path.basename(img_path))
+            self._load_image_preview(img_path)
+
+        vid_path = gui.get('video_path', '')
+        if vid_path and os.path.exists(vid_path):
+            self.video_path = vid_path
+            self.video_row.set_subtitle(os.path.basename(vid_path))
+            self._load_video_preview(vid_path)
+
+        self.color_row.set_selected(gui.get('color', 0))
+        self.loop_row.set_active(gui.get('loop', True))
+
+        # restore image rotation after viewport loads
+        rot = gui.get('image_rotation', 0)
+        if rot:
+            def _apply_rot():
+                if self.viewport._source_orig is not None:
+                    self.viewport._rotation = rot
+                    self.viewport._apply_rotation()
+                    self.viewport._canvas.queue_draw()
+            # delay to let the image load first
+            GLib.timeout_add(500, _apply_rot)
+
+    def get_state(self):
+        """capture current gui state for saving"""
+        return {
+            'gui': {
+                'mode': self.mode_row.get_selected(),
+                'image_path': self.image_path or '',
+                'video_path': self.video_path or '',
+                'color': self.color_row.get_selected(),
+                'loop': self.loop_row.get_active(),
+                'image_rotation': self.viewport._rotation if self.viewport._source_orig else 0,
+            },
+            'display': {
+                'brightness': int(self.brightness_scale.get_value()),
+            },
+        }
+
     def set_sensitive_all(self, sensitive):
-        """Enable/disable controls based on connection state."""
         self.brightness_scale.set_sensitive(sensitive)
         self.play_btn.set_sensitive(sensitive and not self._playing)
