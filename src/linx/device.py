@@ -1,5 +1,3 @@
-# usb device controllers for the lcd display and led ring
-
 import datetime
 import io
 import os
@@ -30,6 +28,7 @@ class LCDDevice:
         self.dev = None
         self.h264_buf_len = 202752  # queried from device before streaming
         self._stop = False
+        self._keep_display = False
 
     # ---==<connection>==---
 
@@ -280,7 +279,8 @@ class LCDDevice:
         except KeyboardInterrupt:
             pass
 
-        self.stop_play()
+        if not self._keep_display:
+            self.stop_play()
         return True
 
     # ---==<file upload>==---

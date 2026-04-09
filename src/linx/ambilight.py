@@ -1,5 +1,3 @@
-# ambilight -- sample screen edges and drive led ring to match
-
 import subprocess
 import threading
 import time
@@ -42,26 +40,28 @@ class AmbilightThread(threading.Thread):
     """background thread that samples frames and drives the led ring
 
     brightness: 0.0-1.0 scalar applied to all led output
+    event-driven -- sleeps until a new frame arrives instead of polling
     """
 
     def __init__(self, led_device, brightness=1.0):
         super().__init__(daemon=True)
         self.led = led_device
         self.frame = None
-        self._lock = threading.Lock()
+        self._event = threading.Event()
         self.running = True
         self._error_count = 0
         self.brightness = brightness
 
     def update_frame(self, img):
-        with self._lock:
-            self.frame = img
+        self.frame = img
+        self._event.set()
 
     def run(self):
         last_frame = None
         while self.running:
-            with self._lock:
-                frame = self.frame
+            self._event.wait(timeout=1.0)
+            self._event.clear()
+            frame = self.frame
             if frame is not None and frame is not last_frame:
                 last_frame = frame
                 try:
@@ -76,10 +76,10 @@ class AmbilightThread(threading.Thread):
                     self._error_count += 1
                     if self._error_count <= 3:
                         print(f"[ambilight] LED error: {e}", flush=True)
-            time.sleep(0.1)
 
     def stop(self):
         self.running = False
+        self._event.set()
 
 
 def play_h264_with_ambilight(lcd, led, filepath, loop=True, ambi=None, brightness=1.0):
@@ -96,12 +96,15 @@ def play_h264_with_ambilight(lcd, led, filepath, loop=True, ambi=None, brightnes
     frame_size = sample_w * sample_h * 3
 
     def _start_decoder():
-        return subprocess.Popen([
-            'ffmpeg', '-f', 'h264', '-i', filepath,
-            '-f', 'rawvideo', '-pix_fmt', 'rgb24',
-            '-s', f'{sample_w}x{sample_h}', '-r', '10',
-            '-v', 'error', '-'
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # <[|single thread -- 120x480 doesn't need more, prevents cpu explosion|]>
+        cmd = ['ffmpeg', '-nostdin', '-threads', '1']
+        if loop:
+            cmd += ['-stream_loop', '-1']
+        cmd += ['-f', 'h264', '-i', filepath,
+                '-f', 'rawvideo', '-pix_fmt', 'rgb24',
+                '-s', f'{sample_w}x{sample_h}', '-r', '10',
+                '-v', 'error', '-']
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     state = {'decoder': _start_decoder()}
 
@@ -110,15 +113,17 @@ def play_h264_with_ambilight(lcd, led, filepath, loop=True, ambi=None, brightnes
             dec = state['decoder']
             data = dec.stdout.read(frame_size)
             if not data or len(data) < frame_size:
-                if loop and ambi.running:
-                    try:
-                        dec.terminate()
-                        dec.wait(timeout=2)
-                    except Exception:
-                        pass
-                    state['decoder'] = _start_decoder()
-                    continue
-                break
+                if not loop or not ambi.running:
+                    break
+                # stream_loop handles looping -- this is a fallback if it fails
+                try:
+                    dec.terminate()
+                    dec.wait(timeout=2)
+                except Exception:
+                    pass
+                time.sleep(0.5)
+                state['decoder'] = _start_decoder()
+                continue
             try:
                 img = Image.frombytes('RGB', (sample_w, sample_h), data)
                 ambi.update_frame(img)
@@ -140,5 +145,5 @@ def play_h264_with_ambilight(lcd, led, filepath, loop=True, ambi=None, brightnes
                 state['decoder'].kill()
             except Exception:
                 pass
-        if own_ambi:
+        if own_ambi and not getattr(lcd, '_keep_display', False):
             led.off()

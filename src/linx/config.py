@@ -1,5 +1,3 @@
-# config loading -- merges system + user toml files
-
 import tomllib
 from pathlib import Path
 

@@ -1,5 +1,3 @@
-# cli entry point
-
 import io
 import os
 import signal
@@ -88,11 +86,11 @@ Examples:
         parser.print_help()
         sys.exit(1)
 
-    # Reload config if --config was passed
+    # reload config if --config was passed
     if args.config:
         config = load_config(args.config)
 
-    # --- LED (no LCD needed) ---
+    # --<|||led|||>--
     if args.command == 'led':
         led = LEDDevice()
         if not led.connect():
@@ -115,7 +113,7 @@ Examples:
         led.close()
         return
 
-    # --- Wake (no LCD needed) ---
+    # --<|||wake|||>--
     if args.command == 'wake':
         if usb.core.find(idVendor=LCD_VID, idProduct=LCD_PID):
             print("Already in monitor mode")
@@ -125,7 +123,7 @@ Examples:
             print("Failed -- device not found in either mode")
         return
 
-    # --- LCD commands ---
+    # --<|||lcd|||>--
     lcd = LCDDevice()
     if not lcd.connect():
         print("LCD not found. Is the device plugged in?")

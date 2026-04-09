@@ -1,5 +1,3 @@
-# linx gui -- gtk4 + libadwaita control panel
-
 import sys
 
 import gi
@@ -77,17 +75,25 @@ class LinxWindow(Adw.ApplicationWindow):
         except Exception:
             pass
 
-        # clean up devices
+        # stop playback loop but keep content on screen
         if self.lcd:
+            self.lcd._keep_display = True
             if not self.lcd._stop and self.lcd.dev:
                 self.lcd.request_stop()
+
+        # wait for play thread cleanup (terminates ffmpeg decoder)
+        play_thread = self.display_group._play_thread
+        if play_thread and play_thread.is_alive():
+            play_thread.join(timeout=5)
+
+        # release devices without clearing display or leds
+        if self.lcd:
             try:
                 self.lcd.close()
             except Exception:
                 pass
         if self.led:
             try:
-                self.led.off()
                 self.led.close()
             except Exception:
                 pass

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Linx
 Comment=Lian Li 8.8" Universal Screen Control
-Exec=/home/skinflap/Projects/Linx/.venv/bin/linx-gui
+Exec=linx-gui
 Icon=linx
 Type=Application
 Terminal=false

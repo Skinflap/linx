@@ -9,13 +9,13 @@ import threading
 
 
 class StatusGroup(Adw.PreferencesGroup):
-    """Device connection status, firmware version, connect/disconnect."""
+    """device connection status and controls"""
 
     def __init__(self, window):
         super().__init__(title='Device')
         self.window = window
 
-        # -- Connection row --
+        # ---==<connection>==---
         self.conn_row = Adw.ActionRow(title='Connection', subtitle='Disconnected')
         self.conn_icon = Gtk.Image.new_from_icon_name('network-offline-symbolic')
         self.conn_row.add_prefix(self.conn_icon)
@@ -26,11 +26,11 @@ class StatusGroup(Adw.PreferencesGroup):
         self.conn_row.add_suffix(self.connect_btn)
         self.add(self.conn_row)
 
-        # -- Firmware row --
+        # ---==<firmware>==---
         self.fw_row = Adw.ActionRow(title='Firmware', subtitle='--')
         self.add(self.fw_row)
 
-        # -- LED row --
+        # ---==<led>==---
         self.led_row = Adw.ActionRow(title='LED Ring', subtitle='--')
         self.add(self.led_row)
 

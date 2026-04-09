@@ -1,5 +1,3 @@
-# usb mode switching -- wake device from desktop/standby mode
-
 import time
 import usb.core
 import usb.util

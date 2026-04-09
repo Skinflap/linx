@@ -10,7 +10,7 @@ from gi.repository import Gtk, Adw, GLib
 
 
 def _systemctl(*args):
-    """Run systemctl --user and return (returncode, stdout)."""
+    """run systemctl --user, returns (rc, stdout)"""
     result = subprocess.run(
         ['systemctl', '--user', *args],
         capture_output=True, text=True, timeout=10,
@@ -19,13 +19,13 @@ def _systemctl(*args):
 
 
 class ServiceGroup(Adw.PreferencesGroup):
-    """Systemd user service status and controls."""
+    """systemd service status and controls"""
 
     def __init__(self, window):
         super().__init__(title='Service')
         self.window = window
 
-        # -- Status row --
+        # ---==<status>==---
         self.status_row = Adw.ActionRow(title='linx.service', subtitle='checking...')
         self.status_icon = Gtk.Image.new_from_icon_name('emblem-synchronizing-symbolic')
         self.status_row.add_prefix(self.status_icon)
@@ -37,7 +37,7 @@ class ServiceGroup(Adw.PreferencesGroup):
         self.status_row.add_suffix(refresh_btn)
         self.add(self.status_row)
 
-        # -- Control row --
+        # ---==<controls>==---
         self.control_row = Adw.ActionRow(title='')
 
         self.start_btn = Gtk.Button(label='Start', valign=Gtk.Align.CENTER)
@@ -53,13 +53,13 @@ class ServiceGroup(Adw.PreferencesGroup):
         self.control_row.add_suffix(self.restart_btn)
         self.add(self.control_row)
 
-        # -- Enable on login --
+        # ---==<autostart>==---
         self.enable_row = Adw.SwitchRow(title='Start on login')
         self.enable_row.connect('notify::active', self._on_enable_toggled)
         self._enable_updating = False
         self.add(self.enable_row)
 
-        # Initial refresh
+        # initial refresh
         self.refresh()
 
     def refresh(self):
@@ -74,7 +74,7 @@ class ServiceGroup(Adw.PreferencesGroup):
 
     def _update_ui(self, active, status_text, is_enabled):
         self.status_row.set_subtitle(status_text)
-        # Can't start service while GUI has the device open
+        # can't start service while gui has the device
         gui_has_device = (self.window.lcd is not None and
                           self.window.lcd.dev is not None)
         if active:

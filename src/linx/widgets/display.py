@@ -36,7 +36,7 @@ class DisplayGroup(Adw.PreferencesGroup):
         self._rotation = 0
         self._config = config or {}
 
-        # -- brightness --
+        # ---==<brightness>==---
         self.brightness_row = Adw.ActionRow(title='Brightness')
         self.brightness_scale = Gtk.Scale.new_with_range(
             Gtk.Orientation.HORIZONTAL, 0, 100, 1)
@@ -48,13 +48,13 @@ class DisplayGroup(Adw.PreferencesGroup):
         self.brightness_row.add_suffix(self.brightness_scale)
         self.add(self.brightness_row)
 
-        # -- mode selector --
+        # ---==<mode selector>==---
         self.mode_model = Gtk.StringList.new(MODES)
         self.mode_row = Adw.ComboRow(title='Mode', model=self.mode_model)
         self.mode_row.connect('notify::selected', self._on_mode_changed)
         self.add(self.mode_row)
 
-        # -- viewport editor --
+        # ---==<viewport>==---
         self.viewport_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.viewport = ViewportEditor()
         self.viewport.set_on_crop_changed(self._on_crop_changed)
@@ -62,7 +62,7 @@ class DisplayGroup(Adw.PreferencesGroup):
         self.viewport_box.append(self.viewport)
         self.add(self.viewport_box)
 
-        # -- mode-specific controls --
+        # ---==<mode controls>==---
         # image
         self.image_row = Adw.ActionRow(title='File')
         self.image_path = None
@@ -103,7 +103,7 @@ class DisplayGroup(Adw.PreferencesGroup):
                 self.add(row)
         self._show_mode(0)
 
-        # -- play / stop --
+        # ---==<play/stop>==---
         self.action_row = Adw.ActionRow(title='')
         self.play_btn = Gtk.Button(label='Play', valign=Gtk.Align.CENTER)
         self.play_btn.add_css_class('suggested-action')

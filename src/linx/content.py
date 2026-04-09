@@ -1,7 +1,3 @@
-# content generation -- encoding, color fills, matrix rain
-#
-# efficiency matters here. the device takes raw h264 chunks or jpeg/png.
-# never encode what you can push directly.
 
 import io
 import os

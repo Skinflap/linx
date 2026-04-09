@@ -12,7 +12,7 @@ class LEDGroup(Adw.PreferencesGroup):
         super().__init__(title='LED Ring')
         self.window = window
 
-        # -- color picker --
+        # ---==<color>==---
         self.color_row = Adw.ActionRow(title='Color')
         self._rgba = Gdk.RGBA()
         self._rgba.parse('red')
@@ -34,7 +34,7 @@ class LEDGroup(Adw.PreferencesGroup):
         self.color_row.add_suffix(self.off_btn)
         self.add(self.color_row)
 
-        # -- brightness --
+        # ---==<brightness>==---
         self.brightness_row = Adw.ActionRow(title='LED Brightness')
         self.brightness_scale = Gtk.Scale.new_with_range(
             Gtk.Orientation.HORIZONTAL, 0, 100, 1)
@@ -45,7 +45,7 @@ class LEDGroup(Adw.PreferencesGroup):
         self.brightness_row.add_suffix(self.brightness_scale)
         self.add(self.brightness_row)
 
-        # -- ambilight toggle --
+        # ---==<ambilight>==---
         self.ambilight_row = Adw.SwitchRow(title='Ambilight',
                                             subtitle='Sync LEDs to screen edges during playback')
         self.add(self.ambilight_row)
