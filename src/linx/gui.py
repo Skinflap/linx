@@ -43,6 +43,11 @@ class LinxWindow(Adw.ApplicationWindow):
         header.pack_end(self._build_menu_button())
         toolbar.add_top_bar(header)
 
+        # disconnected empty-state prompt -- revealed when no screen is connected
+        self.banner = Adw.Banner(title='No screen connected', button_label='Connect')
+        self.banner.connect('button-clicked', lambda _b: self.status_group._on_connect(None))
+        toolbar.add_top_bar(self.banner)
+
         self.toast_overlay = Adw.ToastOverlay()
         toolbar.set_content(self.toast_overlay)
 
@@ -115,6 +120,7 @@ class LinxWindow(Adw.ApplicationWindow):
         led_ok = self.led is not None and self.led.dev is not None
         self.display_group.set_sensitive_all(lcd_ok)
         self.led_group.set_sensitive_all(led_ok)
+        self.banner.set_revealed(not lcd_ok)
 
     def show_toast(self, message):
         self.toast_overlay.add_toast(Adw.Toast(title=str(message), timeout=3))

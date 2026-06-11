@@ -202,8 +202,12 @@ class DisplayGroup(Adw.PreferencesGroup):
         except GLib.Error:
             pass
 
-    def _load_image_preview(self, path):
-        """load image into viewport -- thumbnail for display, full-res for device"""
+    def _load_image_preview(self, path, on_loaded=None):
+        """load image into viewport -- thumbnail for display, full-res for device.
+
+        on_loaded (if given) runs on the UI thread once the source is set --
+        used to restore rotation deterministically instead of a fixed delay.
+        """
         def _work():
             from PIL import Image
             try:
@@ -213,9 +217,16 @@ class DisplayGroup(Adw.PreferencesGroup):
                 max_dim = 1200
                 if preview.width > max_dim or preview.height > max_dim:
                     preview.thumbnail((max_dim, max_dim), Image.LANCZOS)
-                GLib.idle_add(self.viewport.set_source, preview, full)
-            except Exception:
-                pass
+            except Exception as e:
+                GLib.idle_add(self.window.show_toast, f'Could not load image: {e}')
+                return
+
+            def _apply():
+                self.viewport.set_source(preview, full)
+                if on_loaded:
+                    on_loaded()
+                return False
+            GLib.idle_add(_apply)
         threading.Thread(target=_work, daemon=True).start()
 
     def _on_pick_video(self, btn):
@@ -401,6 +412,7 @@ class DisplayGroup(Adw.PreferencesGroup):
         filepath = args['path']
         need_cleanup = False
         if not filepath.endswith('.h264'):
+            GLib.idle_add(self.window.show_toast, 'Encoding video…')
             rot = getattr(self, '_rotation', 0)
             crop = self._scale_crop_for_video(filepath, rot)
             filepath = encode_h264(filepath, crop=crop, rotation=rot)
@@ -545,11 +557,20 @@ class DisplayGroup(Adw.PreferencesGroup):
         mode = gui.get('mode', 0)
         self.mode_row.set_selected(mode)
 
+        rot = gui.get('image_rotation', 0)
+
+        def _restore_rotation():
+            # runs once the viewport source is actually loaded -- no fixed delay
+            if rot and self.viewport._source_orig is not None:
+                self.viewport._rotation = rot
+                self.viewport._apply_rotation()
+                self.viewport._canvas.queue_draw()
+
         img_path = gui.get('image_path', '')
         if img_path and os.path.exists(img_path):
             self.image_path = img_path
             self.image_row.set_subtitle(os.path.basename(img_path))
-            self._load_image_preview(img_path)
+            self._load_image_preview(img_path, on_loaded=_restore_rotation)
 
         vid_path = gui.get('video_path', '')
         if vid_path and os.path.exists(vid_path):
@@ -559,17 +580,6 @@ class DisplayGroup(Adw.PreferencesGroup):
 
         self.color_row.set_selected(gui.get('color', 0))
         self.loop_row.set_active(gui.get('loop', True))
-
-        # restore image rotation after viewport loads
-        rot = gui.get('image_rotation', 0)
-        if rot:
-            def _apply_rot():
-                if self.viewport._source_orig is not None:
-                    self.viewport._rotation = rot
-                    self.viewport._apply_rotation()
-                    self.viewport._canvas.queue_draw()
-            # delay to let the image load first
-            GLib.timeout_add(500, _apply_rot)
 
     def get_state(self):
         """capture current gui state for saving"""
