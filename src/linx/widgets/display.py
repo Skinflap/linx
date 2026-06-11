@@ -558,13 +558,19 @@ class DisplayGroup(Adw.PreferencesGroup):
         self.mode_row.set_selected(mode)
 
         rot = gui.get('image_rotation', 0)
+        saved_crop = gui.get('crop')
 
         def _restore_rotation():
             # runs once the viewport source is actually loaded -- no fixed delay
-            if rot and self.viewport._source_orig is not None:
+            if self.viewport._source_orig is None:
+                return
+            if rot:
                 self.viewport._rotation = rot
                 self.viewport._apply_rotation()
-                self.viewport._canvas.queue_draw()
+            # apply crop after rotation (rotation resets the crop to fit)
+            if saved_crop:
+                self.viewport.set_crop_state(saved_crop)
+            self.viewport._canvas.queue_draw()
 
         img_path = gui.get('image_path', '')
         if img_path and os.path.exists(img_path):
@@ -583,6 +589,7 @@ class DisplayGroup(Adw.PreferencesGroup):
 
     def get_state(self):
         """capture current gui state for saving"""
+        has_src = self.viewport._source_orig is not None
         return {
             'gui': {
                 'mode': self.mode_row.get_selected(),
@@ -590,7 +597,8 @@ class DisplayGroup(Adw.PreferencesGroup):
                 'video_path': self.video_path or '',
                 'color': self.color_row.get_selected(),
                 'loop': self.loop_row.get_active(),
-                'image_rotation': self.viewport._rotation if self.viewport._source_orig else 0,
+                'image_rotation': self.viewport._rotation if has_src else 0,
+                'crop': (self.viewport.get_crop_state() or []) if has_src else [],
             },
             'display': {
                 'brightness': int(self.brightness_scale.get_value()),

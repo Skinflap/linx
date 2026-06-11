@@ -12,7 +12,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 import cairo
-from gi.repository import Gtk
+from gi.repository import Gdk, Gtk
 
 from ..protocol import HEIGHT, WIDTH
 
@@ -104,6 +104,12 @@ class ViewportEditor(Gtk.Box):
             flags=Gtk.EventControllerScrollFlags.VERTICAL)
         scroll.connect('scroll', self._on_scroll)
         self._canvas.add_controller(scroll)
+
+        # keyboard: R / Shift+R rotate, Esc reset crop to fit
+        self._canvas.set_focusable(True)
+        key = Gtk.EventControllerKey()
+        key.connect('key-pressed', self._on_key)
+        self._canvas.add_controller(key)
 
     def set_on_crop_changed(self, cb):
         self._on_crop_changed = cb
@@ -197,6 +203,31 @@ class ViewportEditor(Gtk.Box):
             return None
         return src.crop((x, y, x + w, y + h)).resize((WIDTH, HEIGHT), Image.LANCZOS)
 
+    # ---==<crop persistence>==---
+    # stored as fractions of the rotated source so they survive across
+    # resolutions / reloads; ratio is re-enforced on restore
+
+    def get_crop_state(self):
+        if self._src_w <= 0 or self._src_h <= 0:
+            return None
+        return [self._crop_x / self._src_w, self._crop_y / self._src_h,
+                self._crop_w / self._src_w, self._crop_h / self._src_h]
+
+    def set_crop_state(self, frac):
+        if not frac or len(frac) != 4 or self._src_w <= 0 or self._src_h <= 0:
+            return
+        fx, fy, fw, _fh = frac
+        cw = max(48, min(fw * self._src_w, self._src_w))
+        ch = cw / DEVICE_RATIO
+        if ch > self._src_h:
+            ch = self._src_h
+            cw = ch * DEVICE_RATIO
+        self._crop_w = cw
+        self._crop_h = ch
+        self._crop_x = max(0, min(fx * self._src_w, self._src_w - cw))
+        self._crop_y = max(0, min(fy * self._src_h, self._src_h - ch))
+        self._canvas.queue_draw()
+
     # ---==<coordinate mapping>==---
 
     def _xform(self):
@@ -248,11 +279,16 @@ class ViewportEditor(Gtk.Box):
         cx, cy = self._s2w(self._crop_x, self._crop_y)
         cw, ch = self._crop_w * s, self._crop_h * s
         sw, sh = self._src_w * s, self._src_h * s
+
+        def _fill(x, y, w, h):
+            cr.rectangle(x, y, w, h)
+            cr.fill()
+
         cr.set_source_rgba(0, 0, 0, 0.55)
-        cr.rectangle(ox, oy, sw, cy - oy); cr.fill()
-        cr.rectangle(ox, cy + ch, sw, (oy + sh) - (cy + ch)); cr.fill()
-        cr.rectangle(ox, cy, cx - ox, ch); cr.fill()
-        cr.rectangle(cx + cw, cy, (ox + sw) - (cx + cw), ch); cr.fill()
+        _fill(ox, oy, sw, cy - oy)                          # above
+        _fill(ox, cy + ch, sw, (oy + sh) - (cy + ch))       # below
+        _fill(ox, cy, cx - ox, ch)                          # left
+        _fill(cx + cw, cy, (ox + sw) - (cx + cw), ch)       # right
 
         # crop border
         cr.set_source_rgb(1, 1, 1)
@@ -274,10 +310,14 @@ class ViewportEditor(Gtk.Box):
         cr.line_to(mx + 6, cy + 6)
         cr.fill()
 
-        # corner handles
-        cr.set_source_rgb(1, 1, 1)
+        # corner handles -- larger filled squares with a dark outline so they
+        # stay grabbable on a trackpad and visible over any content
         for hx, hy in [(cx, cy), (cx+cw, cy), (cx, cy+ch), (cx+cw, cy+ch)]:
-            cr.rectangle(hx - 3, hy - 3, 6, 6)
+            cr.set_source_rgb(0, 0, 0)
+            cr.rectangle(hx - 6, hy - 6, 12, 12)
+            cr.fill()
+            cr.set_source_rgb(1, 1, 1)
+            cr.rectangle(hx - 5, hy - 5, 10, 10)
             cr.fill()
 
     # ---==<interaction>==---
@@ -291,24 +331,46 @@ class ViewportEditor(Gtk.Box):
             return None
         nl, nr = abs(wx-cx) < m, abs(wx-(cx+cw)) < m
         nt, nb = abs(wy-cy) < m, abs(wy-(cy+ch)) < m
-        if nt and nl: return 'nw'
-        if nt and nr: return 'ne'
-        if nb and nl: return 'sw'
-        if nb and nr: return 'se'
-        if nt: return 'n'
-        if nb: return 's'
-        if nl: return 'w'
-        if nr: return 'e'
+        if nt and nl:
+            return 'nw'
+        if nt and nr:
+            return 'ne'
+        if nb and nl:
+            return 'sw'
+        if nb and nr:
+            return 'se'
+        if nt:
+            return 'n'
+        if nb:
+            return 's'
+        if nl:
+            return 'w'
+        if nr:
+            return 'e'
         if cx <= wx <= cx+cw and cy <= wy <= cy+ch:
             return 'body'
         return None
 
     def _on_press(self, g, n, x, y):
-        pass
+        self._canvas.grab_focus()  # so keyboard shortcuts reach the canvas
 
     def _on_release(self, g, n, x, y):
         self._dragging = False
         self._resizing = False
+
+    def _on_key(self, ctrl, keyval, keycode, state):
+        if self._source_orig is None:
+            return False
+        if keyval in (Gdk.KEY_r, Gdk.KEY_R):
+            self._do_rotate(-90 if (state & Gdk.ModifierType.SHIFT_MASK) else 90)
+            return True
+        if keyval == Gdk.KEY_Escape:
+            self._fit_crop()
+            self._canvas.queue_draw()
+            self._notify()
+            self._live_push()
+            return True
+        return False
 
     def _on_drag_begin(self, g, x, y):
         hit = self._hit(x, y)
@@ -374,28 +436,40 @@ class ViewportEditor(Gtk.Box):
         e = self._resize_edge
         x1, y1 = self._crop_x, self._crop_y
         x2, y2 = x1 + self._crop_w, y1 + self._crop_h
-        if 'e' in e: x2 = sx
-        if 'w' in e: x1 = sx
-        if 's' in e: y2 = sy
-        if 'n' in e: y1 = sy
-        x1 = max(0, x1); y1 = max(0, y1)
-        x2 = min(self._src_w, x2); y2 = min(self._src_h, y2)
+        if 'e' in e:
+            x2 = sx
+        if 'w' in e:
+            x1 = sx
+        if 's' in e:
+            y2 = sy
+        if 'n' in e:
+            y1 = sy
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(self._src_w, x2), min(self._src_h, y2)
         w, h = x2-x1, y2-y1
         if w < 24 or h < 24:
             return
         # enforce portrait device ratio
         if 'e' in e or 'w' in e:
             h = w / DEVICE_RATIO
-            if 'n' in e: y1 = y2 - h
-            else: y2 = y1 + h
+            if 'n' in e:
+                y1 = y2 - h
+            else:
+                y2 = y1 + h
         else:
             w = h * DEVICE_RATIO
-            if 'w' in e: x1 = x2 - w
-            else: x2 = x1 + w
-        if x1 < 0: x1 = 0; x2 = w
-        if y1 < 0: y1 = 0; y2 = h
-        if x2 > self._src_w: x2 = self._src_w; x1 = x2 - w
-        if y2 > self._src_h: y2 = self._src_h; y1 = y2 - h
+            if 'w' in e:
+                x1 = x2 - w
+            else:
+                x2 = x1 + w
+        if x1 < 0:
+            x1, x2 = 0, w
+        if y1 < 0:
+            y1, y2 = 0, h
+        if x2 > self._src_w:
+            x2, x1 = self._src_w, self._src_w - w
+        if y2 > self._src_h:
+            y2, y1 = self._src_h, self._src_h - h
         w, h = x2-x1, y2-y1
         if w > 0 and h > 0:
             self._crop_x, self._crop_y = x1, y1

@@ -51,9 +51,6 @@ ignore = ["E501"]
 # which trips E402 (import-not-at-top). This is the mandated idiom, not a smell.
 "src/linx/gui.py" = ["E402"]
 "src/linx/widgets/*.py" = ["E402"]
-# viewport.py uses compact `if cond: a; b` bounds-clamping; slated for a Phase 4
-# rework that will remove these. Scoped here until then.
-"src/linx/widgets/viewport.py" = ["E402", "E701", "E702"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
