@@ -33,10 +33,11 @@ def main():
             except Exception as e:  # noqa: BLE001
                 print(f'action {action} raised: {e}', file=sys.stderr)
                 holder['fail'] = True
+        _check_controller(a.win, holder)
         holder['ok'] = True
 
-    app.connect('activate', on_activate)
-    app.activate()  # synchronously emits activate -> do_activate builds the window
+    app.connect_after('activate', on_activate)  # after do_activate builds the window
+    app.activate()
     # drain any pending idle work (deferred state restore, etc.)
     ctx = GLib.MainContext.default()
     for _ in range(200):
@@ -50,6 +51,33 @@ def main():
         return 1
     print('GUI constructed OK')
     return 0
+
+
+def _check_controller(win, holder):
+    """verify the new controller wiring without touching hardware"""
+    from types import SimpleNamespace
+
+    import usb.core
+
+    # window.lcd/led delegate to the controller
+    sentinel = object()
+    win.controller.lcd = sentinel
+    if win.lcd is not sentinel:
+        print('FAIL: lcd property does not delegate to controller', file=sys.stderr)
+        holder['fail'] = True
+    win.controller.lcd = None
+
+    # hotplug: a vanished device while "connected" must release + update UI
+    win.controller.lcd = SimpleNamespace(dev=object())
+    orig_find = usb.core.find
+    usb.core.find = lambda **k: None  # pretend the screen was unplugged
+    try:
+        win.controller._poll()
+    finally:
+        usb.core.find = orig_find
+    if win.controller.lcd is not None:
+        print('FAIL: hotplug did not release the device on unplug', file=sys.stderr)
+        holder['fail'] = True
 
 
 if __name__ == '__main__':

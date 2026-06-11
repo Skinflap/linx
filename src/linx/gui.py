@@ -1,14 +1,14 @@
 import sys
-import threading
 
 import gi
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Adw, Gio, Gtk
 
 from . import __version__
 from .config import _deep_merge, load_config, save_config
+from .controller import DeviceController
 from .log import get_logger
 from .widgets.display import DisplayGroup
 from .widgets.led import LEDGroup
@@ -30,8 +30,9 @@ class LinxWindow(Adw.ApplicationWindow):
 
     def __init__(self, app):
         super().__init__(application=app, title='Linx')
-        self.lcd = None
-        self.led = None
+        # the controller owns the device handles; window.lcd/window.led are
+        # delegating properties so existing widget code keeps working unchanged
+        self.controller = DeviceController(self)
         self._config = load_config()
 
         # restore window geometry (sensible portrait-ish default)
@@ -82,6 +83,26 @@ class LinxWindow(Adw.ApplicationWindow):
         # restore previous state after widgets are built
         self.display_group.restore_state()
 
+        # watch for the screen being unplugged while connected
+        self.controller.start_watch()
+
+    # device handles live on the controller; expose them as the names widgets expect
+    @property
+    def lcd(self):
+        return self.controller.lcd
+
+    @lcd.setter
+    def lcd(self, value):
+        self.controller.lcd = value
+
+    @property
+    def led(self):
+        return self.controller.led
+
+    @led.setter
+    def led(self, value):
+        self.controller.led = value
+
     def _build_menu_button(self):
         menu = Gio.Menu()
         menu.append('Preferences', 'app.preferences')
@@ -97,23 +118,12 @@ class LinxWindow(Adw.ApplicationWindow):
     # ---==<device op helper>==---
 
     def run_device_op(self, fn, on_done=None, on_error=None, error_prefix=''):
-        """run a blocking device call off the UI thread, report errors as toasts.
+        """run a blocking device call off the UI thread, reporting errors as toasts.
 
         keeps the UI responsive (USB calls take tens of ms) and gives every
         device action consistent feedback instead of silent fire-and-forget.
         """
-        def _work():
-            try:
-                result = fn()
-            except Exception as e:
-                log.debug("device op failed: %s", e)
-                msg = f'{error_prefix}{e}' if error_prefix else str(e)
-                GLib.idle_add(on_error or self.show_toast, msg)
-                return
-            if on_done:
-                GLib.idle_add(on_done, result)
-
-        threading.Thread(target=_work, daemon=True).start()
+        self.controller.run_op(fn, on_done, on_error, error_prefix)
 
     def on_connection_changed(self):
         lcd_ok = self.lcd is not None and self.lcd.dev is not None
@@ -130,6 +140,7 @@ class LinxWindow(Adw.ApplicationWindow):
         Adw.StyleManager.get_default().set_color_scheme(scheme)
 
     def do_close_request(self):
+        self.controller.stop_watch()
         # persist gui state + window geometry
         try:
             state = self.display_group.get_state()

@@ -4,12 +4,7 @@ import gi
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-import subprocess
-import threading
-
-from gi.repository import Adw, GLib, Gtk
-
-NIXIE_SERVICE = 'nixie-clock.service'
+from gi.repository import Adw, Gtk
 
 
 class StatusGroup(Adw.PreferencesGroup):
@@ -47,44 +42,8 @@ class StatusGroup(Adw.PreferencesGroup):
     def _connect(self):
         self.connect_btn.set_sensitive(False)
         self.conn_row.set_subtitle('Connecting...')
-
-        def _work():
-            # stop the nixie-clock service if it has the usb device
-            try:
-                subprocess.run(
-                    ['systemctl', '--user', 'stop', NIXIE_SERVICE],
-                    capture_output=True, text=True, timeout=10,
-                )
-            except Exception:
-                pass
-
-            from ..device import LCDDevice, LEDDevice
-            lcd, led, fw, led_ver = None, None, None, None
-            try:
-                lcd = LCDDevice()
-                lcd_ok = lcd.connect()
-                if lcd_ok:
-                    fw = lcd.get_version()
-                else:
-                    lcd = None
-            except Exception as e:
-                GLib.idle_add(self.window.show_toast, f'LCD: {e}')
-                lcd = None
-
-            try:
-                led = LEDDevice()
-                led_ok = led.connect()
-                if led_ok:
-                    led_ver = led.get_version()
-                else:
-                    led = None
-            except Exception as e:
-                GLib.idle_add(self.window.show_toast, f'LED: {e}')
-                led = None
-
-            GLib.idle_add(self._connect_done, lcd, led, fw, led_ver)
-
-        threading.Thread(target=_work, daemon=True).start()
+        # the controller owns the connect lifecycle (stops nixie, claims devices)
+        self.window.controller.connect_async(self._connect_done)
 
     def _connect_done(self, lcd, led, fw, led_ver):
         self.window.lcd = lcd
@@ -113,14 +72,7 @@ class StatusGroup(Adw.PreferencesGroup):
         self.window.on_connection_changed()
 
     def _disconnect(self):
-        if self.window.lcd:
-            self.window.lcd.close()
-            self.window.lcd = None
-        if self.window.led:
-            self.window.led.off()
-            self.window.led.close()
-            self.window.led = None
-
+        self.window.controller.disconnect()
         self.mark_disconnected()
 
     def mark_disconnected(self):
