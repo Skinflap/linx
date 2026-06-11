@@ -1,6 +1,6 @@
 # Maintainer: Mitchell <skinflap>
 pkgname=linx
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="Linux driver for the Lian Li 8.8\" Universal LCD Screen"
 arch=('any')
@@ -47,6 +47,9 @@ package() {
 
     # desktop entry
     install -Dm644 dist/linx.desktop "$pkgdir/usr/share/applications/linx.desktop"
+
+    # application icon
+    install -Dm644 dist/linx.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/linx.svg"
 
     # license
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

@@ -1,6 +1,6 @@
 # STATE.md — Linx
 
-Last updated: 2026-04-08 (mission 20260408-1943)
+Last updated: 2026-06-11 (modernization pass)
 
 ## What Works
 
@@ -21,20 +21,22 @@ Last updated: 2026-04-08 (mission 20260408-1943)
 - **Process lifecycle**: play thread is joined on GUI close so ffmpeg decoder is properly terminated. No orphan processes
 - **Idle efficiency**: AmbilightThread switched from 100ms polling to Event-based wakeup (1 wakeup/sec idle vs 10/sec)
 
-## What's Broken / Missing
+## Modernization Pass (2026-06)
 
-- **dist/ directory**: PKGBUILD references `dist/linx.udev`, `dist/linx.service`, `dist/linx.conf.default`, `dist/linx.desktop` — none exist. Package build fails for anyone who clones
-- **No tests**: zero test files in project. Protocol, color parsing, edge sampling are all testable pure functions
-- **Version drift**: `__init__` says 1.1.0, pyproject.toml and PKGBUILD say 1.0.0
-- **CLAUDE.md untracked**: exists in working tree but not in git
-- **12 uncommitted files**: CODEVOICE delimiter reformatting (no logic changes), ready to commit
+Backend overhauled on branch `enhance/modernization`:
 
-## Known Debt
+- **Fixed**: dist/ now complete (udev/service/conf/desktop + new `linx.svg` icon); pytest suite (`tests/`, 32 tests) + ruff + CI; version single-sourced from `__init__.__version__` (dynamic in pyproject), all at 1.1.0.
+- **Fixed**: logging (`log.py`) replaces `print()` in library code; magic numbers hoisted to `constants.py`; typed exceptions in `errors.py`.
+- **Fixed**: USB errors no longer swallowed silently — transient vs `DeviceDisconnected`; `connect()` fails gracefully on busy/permission; `play_h264` stops instead of spinning on disconnect; `threading.Event` stop flag; validated h264 buffer size.
+- **Fixed**: subprocess/temp-file leaks — `encoded_h264()` context manager, ffmpeg timeouts + guaranteed kill (no orphans), matrix stderr→DEVNULL (no pipe deadlock).
+- **Fixed**: config — correct TOML string escaping, warns (not silent) on parse error, preserves unknown sections, deep-copies defaults (was corrupting module state).
+- **Fixed**: dead `generate_solid_h264` removed; color table de-duped (protocol → content); unverified pump/temp CMDs labeled.
 
-- Duplicate color tables in protocol.py, content.py, display.py
-- Hardcoded magic numbers in protocol packet construction
-- Silent config parse error swallowing
-- `generate_solid_h264` is dead code (imported but never called from CLI)
-- `CMD_GET_TEMPERATURE`, `CMD_SET_PUMP_SPEED`, `CMD_GET_PUMP_SPEED` defined but unimplemented
-- Viewport crop state not persisted in saved GUI state
-- `restore_state` accesses viewport internals directly
+## Still Open (frontend — planned)
+
+- GUI still couples widgets to `window.lcd`/`window.led` and blocks the UI thread on some device calls → `DeviceController` decoupling + non-blocking calls planned.
+- Missing modern Adwaita chrome: primary menu, About, Preferences, keyboard shortcuts.
+- No GUI hotplug detection (manual Connect after replug).
+- Viewport crop/rotation not persisted; `restore_state` reaches into viewport internals + uses a magic 500ms delay.
+- Duplicate color table still in `widgets/display.py` (COLORS) — fold into protocol.
+- CLAUDE.md still untracked in git.

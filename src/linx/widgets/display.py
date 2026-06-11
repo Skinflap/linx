@@ -2,24 +2,47 @@
 
 import io
 import os
+import subprocess
 import threading
 
 import gi
+
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib, Gio
+from gi.repository import Adw, Gio, GLib, Gtk
 
-from ..protocol import WIDTH, HEIGHT, CMD_PUSH_JPG
-from ..content import encode_h264, generate_solid_h264, generate_matrix_h264, make_solid_jpeg, parse_color
 from ..ambilight import AmbilightThread, play_h264_with_ambilight, sample_edge_colors
+from ..content import (
+    encode_h264,
+    generate_matrix_h264,
+    make_solid_jpeg,
+)
+from ..protocol import CMD_PUSH_JPG, HEIGHT, WIDTH
 from .viewport import ViewportEditor
 
-MODES = ['Image', 'Video', 'Color', 'Matrix']
+MODES = ['Image', 'Video', 'Color', 'Matrix', 'Nixie Clock']
+NIXIE_MODE = 4
+NIXIE_SERVICE = 'nixie-clock.service'
 
+
+def _nixie_systemctl(action):
+    # run systemctl --user <action> nixie-clock.service, swallow errors
+    try:
+        return subprocess.run(
+            ['systemctl', '--user', action, NIXIE_SERVICE],
+            capture_output=True, text=True, timeout=10,
+        ).returncode
+    except Exception:
+        return -1
+
+# color-mode presets: Title-cased labels over the shared protocol table
+# (+ black, which the led table calls 'off')
+from ..protocol import LED_COLORS  # noqa: E402
+
+_COLOR_KEYS = ['red', 'green', 'blue', 'white', 'black', 'cyan', 'magenta', 'yellow']
 COLORS = {
-    'Red': (255, 0, 0), 'Green': (0, 255, 0), 'Blue': (0, 0, 255),
-    'White': (255, 255, 255), 'Black': (0, 0, 0), 'Cyan': (0, 255, 255),
-    'Magenta': (255, 0, 255), 'Yellow': (255, 255, 0),
+    k.capitalize(): (0, 0, 0) if k == 'black' else LED_COLORS[k]
+    for k in _COLOR_KEYS
 }
 
 
@@ -216,6 +239,7 @@ class DisplayGroup(Adw.PreferencesGroup):
         """extract first frame from video for viewport preview"""
         def _work():
             import subprocess
+
             from PIL import Image
             try:
                 # extract one frame at low res -- fast
@@ -253,12 +277,20 @@ class DisplayGroup(Adw.PreferencesGroup):
         return led, use_ambi, bri
 
     def _on_play(self, btn):
+        mode = self.mode_row.get_selected()
+
+        # ---==<nixie mode>==---
+        # nixie hands off to its own systemd service -- gui drops the device
+        if mode == NIXIE_MODE:
+            self._set_playing(True)
+            threading.Thread(target=self._do_nixie_handoff, daemon=True).start()
+            return
+
         lcd = self.window.lcd
         if not lcd or not lcd.dev:
             self.window.show_toast('Not connected')
             return
 
-        mode = self.mode_row.get_selected()
         led, use_ambi, bri = self._get_ambilight_state()
 
         args = {'led': led, 'use_ambi': use_ambi, 'bri': bri,
@@ -290,6 +322,9 @@ class DisplayGroup(Adw.PreferencesGroup):
                 if old_thread and old_thread.is_alive():
                     lcd.request_stop()
                     old_thread.join(timeout=10)
+
+                # stop nixie-clock if it's running -- it would fight for usb
+                _nixie_systemctl('stop')
 
                 lcd.stop_play()
                 lcd.clear_layers()
@@ -394,6 +429,50 @@ class DisplayGroup(Adw.PreferencesGroup):
         jpg = make_solid_jpeg(color=rgb)
         lcd.push_image(jpg, CMD_PUSH_JPG)
         GLib.idle_add(self._set_playing, False)
+
+    def _do_nixie_handoff(self):
+        # release the gui's hold on the device so nixie-clock.service can grab it
+        lcd = self.window.lcd
+        if lcd:
+            try:
+                if lcd._stop is False and lcd.dev:
+                    lcd.request_stop()
+            except Exception:
+                pass
+            play_thread = self._play_thread
+            if play_thread and play_thread.is_alive():
+                play_thread.join(timeout=5)
+            try:
+                lcd.stop_play()
+            except Exception:
+                pass
+            try:
+                lcd.close()
+            except Exception:
+                pass
+        led = self.window.led
+        if led:
+            try:
+                led.close()
+            except Exception:
+                pass
+
+        self.window.lcd = None
+        self.window.led = None
+
+        rc = _nixie_systemctl('start')
+
+        def _finish():
+            self.window.status_group.mark_disconnected()
+            self.window.on_connection_changed()
+            self._set_playing(False)
+            if rc == 0:
+                self.window.show_toast('Nixie Clock running')
+            else:
+                self.window.show_toast('Failed to start nixie-clock.service')
+            return False
+
+        GLib.idle_add(_finish)
 
     def _do_matrix(self, lcd, args):
         ambi = None

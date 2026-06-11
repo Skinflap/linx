@@ -1,22 +1,75 @@
 import datetime
 import io
 import os
+import threading
 import time
+
 import usb.core
 import usb.util
 
+from . import constants as C
+from .errors import DeviceDisconnected
+from .log import get_logger
 from .protocol import (
-    LCD_VID, LCD_PID, HID_VID, HID_PID, LED_VID, LED_PID,
-    WIDTH, HEIGHT,
-    CMD_GET_VER, CMD_REBOOT, CMD_BRIGHTNESS, CMD_ROTATE, CMD_SET_FRAMERATE,
-    CMD_GET_H264_BLOCK, CMD_PUSH_JPG, CMD_PUSH_PNG,
-    CMD_START_PLAY, CMD_START_PLAY1, CMD_START_PLAY2,
-    CMD_QUERY_BLOCK, CMD_STOP_PLAY, CMD_SWITCH_DESKTOP,
-    CMD_SET_CLOCK, CMD_STOP_CLOCK,
+    CMD_BRIGHTNESS,
+    CMD_GET_H264_BLOCK,
+    CMD_GET_VER,
+    CMD_PUSH_JPG,
+    CMD_PUSH_PNG,
+    CMD_QUERY_BLOCK,
+    CMD_REBOOT,
+    CMD_ROTATE,
+    CMD_SET_CLOCK,
+    CMD_SET_FRAMERATE,
+    CMD_START_PLAY,
+    CMD_START_PLAY1,
+    CMD_START_PLAY2,
+    CMD_STOP_CLOCK,
+    CMD_STOP_PLAY,
+    CMD_SWITCH_DESKTOP,
     CMD_UPDATE_FIRMWARE,
+    HEIGHT,
+    HID_PID,
+    HID_VID,
+    HUB_PID,
+    HUB_VID,
+    LCD_PID,
+    LCD_VID,
+    LED_PID,
+    LED_VID,
+    WIDTH,
     make_header,
 )
 from .wake import wake_from_desktop
+
+log = get_logger(__name__)
+
+# --<|||diagnostics|||>--
+
+# the screen is an internal usb hub (HUB_VID:HUB_PID) with the lcd controller
+# and the led ring hanging off it. when the panel controller hangs it fails
+# usb enumeration outright (kernel logs descriptor-read errors -110/-71) while
+# the hub and led ring still come up. so "led/hub present but lcd absent" means
+# the screen is plugged in and powered but the display silicon isn't answering
+# the host -- no software reset recovers this, only a physical power-cycle.
+
+def diagnose():
+    """classify why the lcd is unreachable -- returns (code, message)"""
+    if usb.core.find(idVendor=LCD_VID, idProduct=LCD_PID) is not None:
+        return 'ok', 'lcd present in monitor mode'
+    if usb.core.find(idVendor=HID_VID, idProduct=HID_PID) is not None:
+        return 'desktop', 'screen is in desktop mode -- run `linx wake` to switch to monitor mode'
+    screen_present = (
+        usb.core.find(idVendor=LED_VID, idProduct=LED_PID) is not None
+        or usb.core.find(idVendor=HUB_VID, idProduct=HUB_PID) is not None
+    )
+    if screen_present:
+        return 'controller_dead', (
+            'screen is connected (led ring/hub enumerated) but the display '
+            'controller is not responding on usb -- power-cycle the screen '
+            '(check its SATA power lead). a reboot or software reset will not fix this'
+        )
+    return 'absent', 'no screen detected on usb -- check the data and power cables'
 
 
 # --<|||lcd controller|||>--
@@ -26,9 +79,14 @@ class LCDDevice:
 
     def __init__(self):
         self.dev = None
-        self.h264_buf_len = 202752  # queried from device before streaming
-        self._stop = False
+        self.h264_buf_len = C.DEFAULT_H264_BUF_LEN  # queried from device before streaming
+        self._stop_event = threading.Event()
         self._keep_display = False
+
+    @property
+    def _stop(self):
+        """read-only view of the stop flag -- set via request_stop()"""
+        return self._stop_event.is_set()
 
     # ---==<connection>==---
 
@@ -37,54 +95,69 @@ class LCDDevice:
         self.dev = usb.core.find(idVendor=LCD_VID, idProduct=LCD_PID)
         if self.dev is None:
             if usb.core.find(idVendor=HID_VID, idProduct=HID_PID):
-                print("Device in desktop mode, switching to monitor mode...")
+                log.info("device in desktop mode, switching to monitor mode")
                 if wake_from_desktop():
                     self.dev = usb.core.find(idVendor=LCD_VID, idProduct=LCD_PID)
         if self.dev is None:
             return False
-        if self.dev.is_kernel_driver_active(0):
-            self.dev.detach_kernel_driver(0)
+        try:
+            self._claim()
+        except usb.core.USBError as e:
+            log.warning("could not claim lcd interface: %s -- the device is busy "
+                        "(another linx process/GUI may hold it) or udev permissions "
+                        "are missing", e)
+            self.dev = None
+            return False
+        try:
+            log.info("connected: %s %s", self.dev.manufacturer, self.dev.product)
+        except (ValueError, usb.core.USBError):
+            log.info("connected: %04x:%04x", LCD_VID, LCD_PID)
+        return True
+
+    def _claim(self):
+        """detach any kernel driver, set config, claim interface 0"""
+        try:
+            if self.dev.is_kernel_driver_active(0):
+                self.dev.detach_kernel_driver(0)
+        except usb.core.USBError as e:
+            log.debug("detach_kernel_driver failed (continuing): %s", e)
         try:
             self.dev.set_configuration()
-        except usb.core.USBError:
-            pass
+        except usb.core.USBError as e:
+            log.debug("set_configuration failed (continuing): %s", e)
         usb.util.claim_interface(self.dev, 0)
-        try:
-            print(f"Connected: {self.dev.manufacturer} {self.dev.product}")
-        except (ValueError, usb.core.USBError):
-            print(f"Connected: {LCD_VID:04x}:{LCD_PID:04x}")
-        return True
 
     def close(self):
         if self.dev:
             try:
                 usb.util.release_interface(self.dev, 0)
-            except usb.core.USBError:
-                pass
+            except usb.core.USBError as e:
+                log.debug("release_interface failed: %s", e)
             self.dev = None
 
     def _reconnect(self):
         # <[|matches ReInitDev from decompiled source|]>
         try:
             usb.util.release_interface(self.dev, 0)
-        except usb.core.USBError:
-            pass
+        except usb.core.USBError as e:
+            log.debug("release_interface during reconnect failed: %s", e)
         try:
             usb.util.dispose_resources(self.dev)
-        except usb.core.USBError:
-            pass
+        except usb.core.USBError as e:
+            log.debug("dispose_resources during reconnect failed: %s", e)
         self.dev = None
         time.sleep(0.1)
         self.dev = usb.core.find(idVendor=LCD_VID, idProduct=LCD_PID)
         if self.dev is None:
+            log.debug("reconnect: device not found on bus")
             return False
-        if self.dev.is_kernel_driver_active(0):
-            self.dev.detach_kernel_driver(0)
         try:
-            self.dev.set_configuration()
-        except usb.core.USBError:
-            pass
-        usb.util.claim_interface(self.dev, 0)
+            self._claim()
+        except usb.core.USBError as e:
+            log.debug("reconnect: claim failed: %s", e)
+            self.dev = None
+            return False
+        log.debug("reconnect: re-acquired device")
         return True
 
     # ---==<low-level i/o>==---
@@ -93,30 +166,40 @@ class LCDDevice:
         """drain stale data from read endpoint"""
         while True:
             try:
-                self.dev.read(0x81, 512, timeout=10)
+                self.dev.read(C.EP_IN, 512, timeout=C.READ_FLUSH_MS)
             except (usb.core.USBTimeoutError, usb.core.USBError):
                 break
 
     def _send_and_read(self, data, read=True):
-        """write data, optionally read response -- retries once on failure"""
+        """write data, optionally read response.
+
+        a write failure is treated as a possible disconnect: reconnect once and
+        retry. if that also fails the device is genuinely gone -> raise
+        DeviceDisconnected so the caller stops instead of spinning. a missing
+        *response* (read timeout) is benign for many commands and returns None.
+        """
         self._flush_read()
-        write_ms = max(2000, len(data) // 500 + 2000)
+        write_ms = max(C.WRITE_BASE_MS, len(data) // C.WRITE_PER_BYTES + C.WRITE_BASE_MS)
         try:
-            self.dev.write(0x01, data, timeout=write_ms)
-        except usb.core.USBError:
+            self.dev.write(C.EP_OUT, data, timeout=write_ms)
+        except usb.core.USBError as e:
+            log.debug("write failed (%s), attempting reconnect", e)
             if not self._reconnect():
-                return None
+                raise DeviceDisconnected("write failed and device did not re-enumerate") from e
             try:
-                self.dev.write(0x01, data, timeout=write_ms)
-            except usb.core.USBError:
-                return None
+                self.dev.write(C.EP_OUT, data, timeout=write_ms)
+            except usb.core.USBError as e2:
+                raise DeviceDisconnected("write failed again after reconnect") from e2
         if not read:
             return b''
         try:
-            resp = bytes(self.dev.read(0x81, 512, timeout=2000))
+            resp = bytes(self.dev.read(C.EP_IN, 512, timeout=C.READ_RESP_MS))
             self._flush_read()
             return resp
-        except (usb.core.USBTimeoutError, usb.core.USBError):
+        except usb.core.USBTimeoutError:
+            return None  # no response is expected for some commands
+        except usb.core.USBError as e:
+            log.debug("read failed: %s", e)
             return None
 
     def send_cmd(self, cmd, data=None):
@@ -180,12 +263,16 @@ class LCDDevice:
         return self.send_cmd(CMD_QUERY_BLOCK)
 
     def check_h264_block(self):
+        """query the device's preferred chunk size, validated against a sane ceiling"""
         resp = self.send_cmd(CMD_GET_H264_BLOCK)
         if resp and len(resp) > 11:
             size = (resp[8] << 24) | (resp[9] << 16) | (resp[10] << 8) | resp[11]
-            if size > 0:
+            if 0 < size <= C.MAX_H264_BUF_LEN:
                 self.h264_buf_len = size
                 return size
+            if size > C.MAX_H264_BUF_LEN:
+                log.warning("device reported implausible h264 buffer %d, keeping %d",
+                            size, self.h264_buf_len)
         return self.h264_buf_len
 
     # ---==<image push>==---
@@ -224,39 +311,42 @@ class LCDDevice:
 
     # ---==<h264 streaming>==---
 
-    def _wait_buffer(self, max_blocks=2, play_cmd=CMD_START_PLAY):
-        """poll QueryBlock until the device buffer has room"""
-        buf_idx = {CMD_START_PLAY: 8, CMD_START_PLAY1: 9, CMD_START_PLAY2: 10}.get(play_cmd, 8)
-        for _ in range(200):
-            time.sleep(0.05)
-            try:
-                resp = self.send_cmd(CMD_QUERY_BLOCK)
-            except usb.core.USBError:
-                time.sleep(0.5)
-                continue
+    _BLOCK_IDX = {CMD_START_PLAY: 8, CMD_START_PLAY1: 9, CMD_START_PLAY2: 10}
+
+    def _wait_buffer(self, max_blocks=C.BUFFER_TARGET_BLOCKS, play_cmd=CMD_START_PLAY):
+        """poll QueryBlock until the device buffer drains to max_blocks (or give up)"""
+        buf_idx = self._BLOCK_IDX.get(play_cmd, 8)
+        for _ in range(C.BUFFER_POLL_MAX):
+            if self._stop_event.wait(C.BUFFER_POLL_S):
+                return  # stop requested
+            resp = self.send_cmd(CMD_QUERY_BLOCK)
             if resp and len(resp) > buf_idx and resp[buf_idx] <= max_blocks:
                 return
-        print(f"[{time.strftime('%H:%M:%S')}] buffer wait timeout")
+        log.warning("buffer wait timed out after %d polls", C.BUFFER_POLL_MAX)
 
     def request_stop(self):
-        """thread-safe stop flag for gui"""
-        self._stop = True
+        """signal any running play_h264 loop to stop -- safe to call from any thread"""
+        self._stop_event.set()
 
     def play_h264(self, filepath, loop=True, play_cmd=CMD_START_PLAY, play_count=1):
-        """stream raw h264 to the device in chunks with flow control"""
+        """stream raw h264 to the device in chunks with flow control.
+
+        returns True on a clean finish/stop, False if the file is missing.
+        raises DeviceDisconnected if the device falls off the bus mid-stream.
+        """
         if not os.path.exists(filepath):
-            print(f"File not found: {filepath}")
+            log.error("file not found: %s", filepath)
             return False
 
-        self._stop = False
+        self._stop_event.clear()
         self.check_h264_block()
         buf_len = self.h264_buf_len
-        buf_idx = {CMD_START_PLAY: 8, CMD_START_PLAY1: 9, CMD_START_PLAY2: 10}.get(play_cmd, 8)
+        buf_idx = self._BLOCK_IDX.get(play_cmd, 8)
 
         try:
-            while not self._stop:
+            while not self._stop_event.is_set():
                 with open(filepath, 'rb') as f:
-                    while not self._stop:
+                    while not self._stop_event.is_set():
                         chunk = f.read(buf_len)
                         if not chunk:
                             break
@@ -270,17 +360,20 @@ class LCDDevice:
                         ])
                         buf[0:512] = make_header(play_cmd, header_data)
                         resp = self._send_and_read(bytes(buf))
-                        time.sleep(0.03)
-                        if resp and len(resp) > buf_idx and resp[buf_idx] > 3:
-                            self._wait_buffer(2, play_cmd)
+                        time.sleep(C.CHUNK_DELAY_S)
+                        if resp and len(resp) > buf_idx and resp[buf_idx] > C.BUFFER_BUSY_BLOCKS:
+                            self._wait_buffer(C.BUFFER_TARGET_BLOCKS, play_cmd)
 
                 if not loop:
                     break
         except KeyboardInterrupt:
             pass
-
-        if not self._keep_display:
-            self.stop_play()
+        finally:
+            if not self._keep_display:
+                try:
+                    self.stop_play()
+                except DeviceDisconnected:
+                    log.debug("stop_play skipped -- device already gone")
         return True
 
     # ---==<file upload>==---
@@ -318,31 +411,45 @@ class LEDDevice:
         self.dev = usb.core.find(idVendor=LED_VID, idProduct=LED_PID)
         if self.dev is None:
             return False
-        if self.dev.is_kernel_driver_active(0):
-            self.dev.detach_kernel_driver(0)
+        try:
+            if self.dev.is_kernel_driver_active(0):
+                self.dev.detach_kernel_driver(0)
+        except usb.core.USBError as e:
+            log.debug("led detach_kernel_driver failed (continuing): %s", e)
         try:
             self.dev.set_configuration()
-        except usb.core.USBError:
-            pass
-        usb.util.claim_interface(self.dev, 0)
+        except usb.core.USBError as e:
+            log.debug("led set_configuration failed (continuing): %s", e)
+        try:
+            usb.util.claim_interface(self.dev, 0)
+        except usb.core.USBError as e:
+            log.warning("could not claim led interface: %s (busy or permissions)", e)
+            self.dev = None
+            return False
         return True
 
     def close(self):
         if self.dev:
             try:
                 usb.util.release_interface(self.dev, 0)
-            except usb.core.USBError:
-                pass
+            except usb.core.USBError as e:
+                log.debug("led release_interface failed: %s", e)
             self.dev = None
 
     def _send(self, data, read=True):
+        # fire-and-forget: a dead led ring must never crash a caller (e.g. off()
+        # in a cleanup path), so write errors are logged and swallowed.
         buf = bytearray(64)
         buf[:min(len(data), 64)] = data[:64]
-        self.dev.write(0x01, bytes(buf), timeout=2000)
+        try:
+            self.dev.write(C.EP_OUT, bytes(buf), timeout=C.LED_WRITE_MS)
+        except usb.core.USBError as e:
+            log.debug("led write failed: %s", e)
+            return None
         if not read:
             return None
         try:
-            return bytes(self.dev.read(0x81, 64, timeout=500))
+            return bytes(self.dev.read(C.EP_IN, 64, timeout=C.LED_READ_MS))
         except (usb.core.USBTimeoutError, usb.core.USBError):
             return None
 

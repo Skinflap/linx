@@ -8,8 +8,8 @@
 
 import struct
 import time
-from Crypto.Cipher import DES
 
+from Crypto.Cipher import DES
 
 # --<|||constants|||>--
 
@@ -17,6 +17,7 @@ from Crypto.Cipher import DES
 LCD_VID, LCD_PID = 0x1CBE, 0xA088   # TI MCU -- monitor mode (display commands)
 HID_VID, HID_PID = 0x1A86, 0xAD21   # WCH chip -- desktop/standby mode
 LED_VID, LED_PID = 0x0416, 0x8050   # WCH chip -- LED ring controller
+HUB_VID, HUB_PID = 0x1A86, 0x8091   # QinHeng chip -- screen's internal usb hub
 
 # display resolution -- 8.8" portrait panel
 WIDTH = 480
@@ -40,6 +41,9 @@ CMD_UPDATE_FIRMWARE = 40
 CMD_DEL_FILE       = 42
 CMD_SET_CLOCK      = 51
 CMD_STOP_CLOCK     = 52
+# UNVERIFIED -- present in the decompiled enum but never exercised against
+# hardware (these target aio-pump variants of the controller, not the 8.8"
+# screen). kept for reference; do not rely on them.
 CMD_GET_TEMPERATURE = 96
 CMD_SET_PUMP_SPEED = 97
 CMD_GET_PUMP_SPEED = 98

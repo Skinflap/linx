@@ -1,17 +1,31 @@
+import argparse
 import io
 import os
 import signal
 import sys
-import argparse
-
-from .protocol import LCD_VID, LCD_PID, HID_VID, HID_PID, LED_VID, LED_PID, WIDTH, HEIGHT, LED_COLORS
-from .device import LCDDevice, LEDDevice
-from .wake import wake_from_desktop
-from .ambilight import sample_edge_colors, AmbilightThread, play_h264_with_ambilight
-from .content import encode_h264, generate_solid_h264, generate_matrix_h264
-from .config import load_config
 
 import usb.core
+
+from .ambilight import AmbilightThread, play_h264_with_ambilight, sample_edge_colors
+from .config import load_config
+from .content import encoded_h264, generate_matrix_h264
+from .device import LCDDevice, LEDDevice, diagnose
+from .errors import EncodeError, LinxError
+from .log import get_logger, setup_logging
+from .protocol import (
+    HEIGHT,
+    HID_PID,
+    HID_VID,
+    LCD_PID,
+    LCD_VID,
+    LED_COLORS,
+    LED_PID,
+    LED_VID,
+    WIDTH,
+)
+from .wake import wake_from_desktop
+
+log = get_logger(__name__)
 
 
 def main():
@@ -33,6 +47,8 @@ Examples:
 """)
     parser.add_argument('--config', '-c', metavar='FILE',
                         help='Config file path (overrides system/user configs)')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='Verbose (debug) logging to stderr')
     sub = parser.add_subparsers(dest='command')
 
     sub.add_parser('test', help='Test connection and show firmware info')
@@ -82,6 +98,7 @@ Examples:
     p.add_argument('target', help='Device path (e.g. /usr/data/boot.jpg)')
 
     args = parser.parse_args()
+    setup_logging(verbose=args.verbose)
     if not args.command:
         parser.print_help()
         sys.exit(1)
@@ -126,10 +143,15 @@ Examples:
     # --<|||lcd|||>--
     lcd = LCDDevice()
     if not lcd.connect():
-        print("LCD not found. Is the device plugged in?")
-        print(f"  Monitor mode: {LCD_VID:04x}:{LCD_PID:04x}")
-        print(f"  Desktop mode: {HID_VID:04x}:{HID_PID:04x}")
-        print("  Try: linx wake")
+        code, msg = diagnose()
+        if code == 'ok':
+            # present on the bus but connect() still failed -> claim problem
+            msg = ("lcd is present but could not be claimed -- another process "
+                   "(the GUI or a linx service) is holding it, or udev permissions "
+                   "are missing (run over a local session, not bare SSH)")
+        print(f"LCD not reachable: {msg}", file=sys.stderr)
+        print(f"  Monitor mode: {LCD_VID:04x}:{LCD_PID:04x}   Desktop mode: {HID_VID:04x}:{HID_PID:04x}",
+              file=sys.stderr)
         sys.exit(1)
 
     use_ambilight = getattr(args, 'ambilight', False) or config['ambilight']['enabled']
@@ -178,21 +200,18 @@ Examples:
         elif args.command == 'play':
             lcd.init()
             lcd.prepare_display()
-            filepath = args.file
-            if not filepath.endswith('.h264'):
-                print(f"Encoding {filepath}...")
-                filepath = encode_h264(filepath)
-                if not filepath:
-                    sys.exit(1)
-            print(f"Streaming ({os.path.getsize(filepath)} bytes)...")
-            if use_ambilight:
-                play_h264_with_ambilight(lcd, led, filepath,
-                                         loop=not args.no_loop,
-                                         brightness=led_brightness)
-            else:
-                lcd.play_h264(filepath, loop=not args.no_loop)
             if not args.file.endswith('.h264'):
-                os.unlink(filepath)
+                print(f"Encoding {args.file}...")
+            # context manager guarantees the temp .h264 is removed even if
+            # streaming raises (e.g. device unplugged mid-play)
+            with encoded_h264(args.file) as filepath:
+                print(f"Streaming ({os.path.getsize(filepath)} bytes)...")
+                if use_ambilight:
+                    play_h264_with_ambilight(lcd, led, filepath,
+                                             loop=not args.no_loop,
+                                             brightness=led_brightness)
+                else:
+                    lcd.play_h264(filepath, loop=not args.no_loop)
 
         elif args.command == 'color':
             lcd.init()
@@ -215,6 +234,10 @@ Examples:
                 ambi.start()
             h264 = generate_matrix_h264(duration=args.duration, fps=args.fps,
                                          ambilight=ambi)
+            if not h264:
+                if ambi:
+                    ambi.stop()
+                raise EncodeError("matrix generation failed")
             try:
                 if use_ambilight:
                     play_h264_with_ambilight(lcd, led, h264, loop=True, ambi=ambi)
@@ -223,7 +246,8 @@ Examples:
             finally:
                 if ambi:
                     ambi.stop()
-                os.unlink(h264)
+                if os.path.exists(h264):
+                    os.unlink(h264)
 
         elif args.command == 'brightness':
             lcd.set_brightness(args.level)
@@ -241,6 +265,11 @@ Examples:
             resp = lcd.upload_file(data, args.target)
             print("Done" if resp else "No response")
 
+    except KeyboardInterrupt:
+        lcd.request_stop()
+    except LinxError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     finally:
         lcd.close()
         if led:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "linx"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Linux driver for the Lian Li 8.8\" Universal LCD Screen"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 # libadwaita is a system package (python-gobject wraps it) -- install via pacman
 gui = ["PyGObject>=3.44"]
+dev = ["pytest>=7.0", "ruff>=0.4"]
 
 [project.scripts]
 linx = "linx.cli:main"
@@ -29,3 +30,31 @@ linx-gui = "linx.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+# single source of truth: src/linx/__init__.py __version__ (AST-parsed, no import)
+version = {attr = "linx.__version__"}
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# pyflakes (F) + bugbear (B) + import sort (I) + pyupgrade (UP) + common pycodestyle.
+# E501 (line length) is left to the formatter; the codebase has intentional long lines.
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# GTK requires gi.require_version() to run *before* `from gi.repository import ...`,
+# which trips E402 (import-not-at-top). This is the mandated idiom, not a smell.
+"src/linx/gui.py" = ["E402"]
+"src/linx/widgets/*.py" = ["E402"]
+# viewport.py uses compact `if cond: a; b` bounds-clamping; slated for a Phase 4
+# rework that will remove these. Scoped here until then.
+"src/linx/widgets/viewport.py" = ["E402", "E701", "E702"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

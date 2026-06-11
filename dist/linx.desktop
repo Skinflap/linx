@@ -5,4 +5,5 @@ Exec=linx-gui
 Icon=linx
 Type=Application
 Terminal=false
-Categories=Utility;HardwareSettings;
+Categories=Utility;Settings;HardwareSettings;
+Keywords=lcd;screen;lian li;display;led;ambilight;

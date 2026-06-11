@@ -1,9 +1,10 @@
 # led ring controls -- color, brightness, ambilight
 
 import gi
+
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Gdk
+from gi.repository import Adw, Gdk, Gtk
 
 
 class LEDGroup(Adw.PreferencesGroup):
@@ -65,13 +66,15 @@ class LEDGroup(Adw.PreferencesGroup):
             return
         r, g, b = self._get_rgb()
         bri = self.get_brightness()
-        led.set_all(int(r * bri), int(g * bri), int(b * bri))
+        rgb = (int(r * bri), int(g * bri), int(b * bri))
+        # off the UI thread -- a USB write must never freeze the window
+        self.window.run_device_op(lambda: led.set_all(*rgb), error_prefix='LED: ')
 
     def _on_off(self, btn):
         led = self.window.led
         if not led or not led.dev:
             return
-        led.off()
+        self.window.run_device_op(led.off, error_prefix='LED: ')
 
     def set_sensitive_all(self, sensitive):
         self.apply_btn.set_sensitive(sensitive)

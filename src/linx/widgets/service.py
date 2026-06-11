@@ -4,18 +4,22 @@ import subprocess
 import threading
 
 import gi
+
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Adw, GLib, Gtk
 
 
 def _systemctl(*args):
-    """run systemctl --user, returns (rc, stdout)"""
-    result = subprocess.run(
-        ['systemctl', '--user', *args],
-        capture_output=True, text=True, timeout=10,
-    )
-    return result.returncode, result.stdout.strip()
+    """run systemctl --user, returns (rc, stdout) -- never raises"""
+    try:
+        result = subprocess.run(
+            ['systemctl', '--user', *args],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode, result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return -1, ''
 
 
 class ServiceGroup(Adw.PreferencesGroup):

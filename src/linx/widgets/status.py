@@ -1,11 +1,15 @@
 # connection status and device info
 
 import gi
+
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib
-
+import subprocess
 import threading
+
+from gi.repository import Adw, GLib, Gtk
+
+NIXIE_SERVICE = 'nixie-clock.service'
 
 
 class StatusGroup(Adw.PreferencesGroup):
@@ -45,6 +49,15 @@ class StatusGroup(Adw.PreferencesGroup):
         self.conn_row.set_subtitle('Connecting...')
 
         def _work():
+            # stop the nixie-clock service if it has the usb device
+            try:
+                subprocess.run(
+                    ['systemctl', '--user', 'stop', NIXIE_SERVICE],
+                    capture_output=True, text=True, timeout=10,
+                )
+            except Exception:
+                pass
+
             from ..device import LCDDevice, LEDDevice
             lcd, led, fw, led_ver = None, None, None, None
             try:
@@ -85,9 +98,11 @@ class StatusGroup(Adw.PreferencesGroup):
             self.connect_btn.add_css_class('destructive-action')
             self.fw_row.set_subtitle(fw or 'unknown')
         else:
-            self.conn_row.set_subtitle('Not found')
+            from ..device import diagnose
+            code, msg = diagnose()
+            self.conn_row.set_subtitle('Controller not responding' if code == 'controller_dead' else 'Not found')
             self.conn_icon.set_from_icon_name('network-offline-symbolic')
-            self.window.show_toast('LCD not found -- is the device plugged in?')
+            self.window.show_toast(msg)
 
         if led:
             self.led_row.set_subtitle(f'Connected (v{led_ver})' if led_ver else 'Connected')
@@ -106,6 +121,10 @@ class StatusGroup(Adw.PreferencesGroup):
             self.window.led.close()
             self.window.led = None
 
+        self.mark_disconnected()
+
+    def mark_disconnected(self):
+        # ui-only refresh -- caller has already released the devices
         self.conn_row.set_subtitle('Disconnected')
         self.conn_icon.set_from_icon_name('network-offline-symbolic')
         self.connect_btn.set_label('Connect')

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff3b30"/>
+      <stop offset="0.25" stop-color="#ffcc00"/>
+      <stop offset="0.5" stop-color="#34c759"/>
+      <stop offset="0.75" stop-color="#00c7be"/>
+      <stop offset="1" stop-color="#0a84ff"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c1c22"/>
+      <stop offset="1" stop-color="#0a0a0c"/>
+    </linearGradient>
+  </defs>
+  <!-- LED ring: rounded portrait frame with an RGB gradient stroke -->
+  <rect x="36" y="10" width="56" height="108" rx="14"
+        fill="none" stroke="url(#ring)" stroke-width="8"/>
+  <!-- the 8.8" portrait panel -->
+  <rect x="44" y="18" width="40" height="92" rx="7" fill="url(#screen)"/>
+  <!-- matrix-rain glyphs hinting at the default screensaver -->
+  <g fill="#34c759" font-family="monospace" font-size="11" font-weight="bold">
+    <text x="51" y="40" opacity="0.55">1</text>
+    <text x="64" y="34" opacity="0.9">0</text>
+    <text x="51" y="58" opacity="0.85">0</text>
+    <text x="64" y="54" opacity="0.45">1</text>
+    <text x="51" y="78" opacity="0.5">1</text>
+    <text x="64" y="76" opacity="0.8">0</text>
+    <text x="58" y="96" opacity="0.6">1</text>
+  </g>
+</svg>

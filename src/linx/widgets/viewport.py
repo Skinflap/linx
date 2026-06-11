@@ -8,12 +8,13 @@ import io
 import threading
 
 import gi
+
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, GLib
 import cairo
+from gi.repository import Gtk
 
-from ..protocol import WIDTH, HEIGHT
+from ..protocol import HEIGHT, WIDTH
 
 DEVICE_RATIO = WIDTH / HEIGHT  # 0.25
 
