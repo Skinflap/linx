@@ -32,11 +32,25 @@ Backend overhauled on branch `enhance/modernization`:
 - **Fixed**: config — correct TOML string escaping, warns (not silent) on parse error, preserves unknown sections, deep-copies defaults (was corrupting module state).
 - **Fixed**: dead `generate_solid_h264` removed; color table de-duped (protocol → content); unverified pump/temp CMDs labeled.
 
-## Still Open (frontend — planned)
+## Frontend (done in this pass)
 
-- GUI still couples widgets to `window.lcd`/`window.led` and blocks the UI thread on some device calls → `DeviceController` decoupling + non-blocking calls planned.
-- Missing modern Adwaita chrome: primary menu, About, Preferences, keyboard shortcuts.
-- No GUI hotplug detection (manual Connect after replug).
-- Viewport crop/rotation not persisted; `restore_state` reaches into viewport internals + uses a magic 500ms delay.
-- Duplicate color table still in `widgets/display.py` (COLORS) — fold into protocol.
-- CLAUDE.md still untracked in git.
+- `controller.py` `DeviceController` owns the lcd/led handles + connection
+  lifecycle; `window.lcd`/`window.led` are delegating properties (zero widget
+  churn). Verified end-to-end on hardware (GUI → controller → device).
+- Poll-based USB hotplug watch releases handles + updates the UI on unplug.
+- Modern Adwaita chrome: primary menu, About dialog, Preferences (theme /
+  rotation / ambilight / service), Keyboard Shortcuts, accelerators.
+- LED Apply/Off (and other device calls) run off the UI thread via
+  `run_device_op`; responsive `Adw.Clamp`; window geometry persisted;
+  disconnected empty-state banner; encoding feedback toast.
+- Viewport: R / Shift+R / Esc keyboard shortcuts, larger handles, crop +
+  rotation persisted (resolution-independent), magic 500ms restore replaced
+  with a load-complete callback. `display.py` COLORS folded onto LED_COLORS.
+- All GUI changes verified headlessly under an xvfb construction smoke
+  (`tests/gui_smoke.py`).
+
+## Still Open
+
+- CLAUDE.md is now tracked; consider committing the dev `.venv` choice (3.14)
+  vs the 3.11 floor if shipping.
+- Hotplug is poll-based (2s); pyudev event-driven could replace it if desired.
