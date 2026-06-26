@@ -20,7 +20,6 @@ DEFAULTS = {
     },
     'ambilight': {
         'enabled': False,
-        'grayscale_max': 0,
     },
     'service': {
         'mode': 'matrix',

@@ -126,15 +126,6 @@ def make_solid_jpeg(color=(0, 0, 0), width=WIDTH, height=HEIGHT):
     return buf.getvalue()
 
 
-def make_png(width=WIDTH, height=HEIGHT, color=(255, 0, 0)):
-    """solid color png at device resolution"""
-    from PIL import Image
-    img = Image.new('RGB', (width, height), color)
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    return buf.getvalue()
-
-
 def parse_color(color_str):
     """parse a color name (see protocol.LED_COLORS, plus 'black') or hex to (r, g, b)"""
     name = color_str.lower()

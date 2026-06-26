@@ -12,7 +12,6 @@ fps = 30
 
 [ambilight]
 enabled = false
-grayscale_max = 0        # 0 = full color, 1-255 = grayscale capped
 
 # [service]
 # mode = "matrix"        # default mode for systemd service

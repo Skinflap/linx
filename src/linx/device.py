@@ -1,6 +1,7 @@
 import datetime
 import io
 import os
+import struct
 import threading
 import time
 
@@ -266,7 +267,7 @@ class LCDDevice:
         """query the device's preferred chunk size, validated against a sane ceiling"""
         resp = self.send_cmd(CMD_GET_H264_BLOCK)
         if resp and len(resp) > 11:
-            size = (resp[8] << 24) | (resp[9] << 16) | (resp[10] << 8) | resp[11]
+            size = int.from_bytes(resp[8:12], 'big')
             if 0 < size <= C.MAX_H264_BUF_LEN:
                 self.h264_buf_len = size
                 return size
@@ -279,11 +280,7 @@ class LCDDevice:
 
     def push_image(self, image_bytes, cmd=CMD_PUSH_PNG):
         """CMD_PUSH_PNG (102) = transparent overlay, CMD_PUSH_JPG (101) = opaque background"""
-        length = len(image_bytes)
-        data = bytes([
-            (length >> 24) & 0xFF, (length >> 16) & 0xFF,
-            (length >> 8) & 0xFF, length & 0xFF
-        ])
+        data = struct.pack('>I', len(image_bytes))
         return self.send_with_payload(cmd, image_bytes, data)
 
     def push_png(self, png_bytes):
@@ -353,11 +350,7 @@ class LCDDevice:
                         data_len = len(chunk)
                         buf = bytearray(512 + data_len)
                         buf[512:] = chunk
-                        header_data = bytes([
-                            (data_len >> 24) & 0xFF, (data_len >> 16) & 0xFF,
-                            (data_len >> 8) & 0xFF, data_len & 0xFF,
-                            0, play_count & 0xFF,
-                        ])
+                        header_data = struct.pack('>I', data_len) + bytes([0, play_count & 0xFF])
                         buf[0:512] = make_header(play_cmd, header_data)
                         resp = self._send_and_read(bytes(buf))
                         time.sleep(C.CHUNK_DELAY_S)
@@ -382,16 +375,9 @@ class LCDDevice:
         """upload to device filesystem (e.g. /usr/data/boot.jpg)"""
         fname_bytes = target_path.encode('ascii')
         fname_len = len(fname_bytes)
-        data_len = len(data)
         header_data = bytearray(492)
-        header_data[0] = (fname_len >> 24) & 0xFF
-        header_data[1] = (fname_len >> 16) & 0xFF
-        header_data[2] = (fname_len >> 8) & 0xFF
-        header_data[3] = fname_len & 0xFF
-        header_data[4] = (data_len >> 24) & 0xFF
-        header_data[5] = (data_len >> 16) & 0xFF
-        header_data[6] = (data_len >> 8) & 0xFF
-        header_data[7] = data_len & 0xFF
+        header_data[0:4] = struct.pack('>I', fname_len)
+        header_data[4:8] = struct.pack('>I', len(data))
         header_data[8:8 + fname_len] = fname_bytes
         return self.send_with_payload(CMD_UPDATE_FIRMWARE, data, bytes(header_data))
 

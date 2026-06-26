@@ -219,8 +219,8 @@ Examples:
             from .content import make_solid_jpeg, parse_color
             from .protocol import CMD_PUSH_JPG
             rgb = parse_color(args.color)
-            if use_ambilight and args.color in LED_COLORS:
-                led.set_all(*LED_COLORS[args.color])
+            if use_ambilight and led:
+                led.set_all(*rgb)  # works for hex too, not just named colors
             jpg = make_solid_jpeg(color=rgb)
             lcd.push_image(jpg, CMD_PUSH_JPG)
             print(f"Color: {args.color}")

@@ -94,9 +94,8 @@ def make_header(cmd, data_at_8=None):
     buf[3] = 0x6D
     struct.pack_into('<I', buf, 4, _ts())
     if data_at_8:
-        for i, b in enumerate(data_at_8):
-            if 8 + i < 500:
-                buf[8 + i] = b
+        n = min(len(data_at_8), 492)  # plaintext buffer is 500 bytes; payload starts at 8
+        buf[8:8 + n] = bytes(data_at_8[:n])
     encrypted = des_encrypt(buf)
     packet = bytearray(512)
     packet[:len(encrypted)] = encrypted[:512]

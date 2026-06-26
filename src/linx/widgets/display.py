@@ -249,8 +249,6 @@ class DisplayGroup(Adw.PreferencesGroup):
     def _load_video_preview(self, path):
         """extract first frame from video for viewport preview"""
         def _work():
-            import subprocess
-
             from PIL import Image
             try:
                 # extract one frame at low res -- fast
@@ -259,7 +257,6 @@ class DisplayGroup(Adw.PreferencesGroup):
                     '-f', 'image2pipe', '-vcodec', 'png', '-'
                 ], capture_output=True, timeout=10)
                 if r.returncode == 0 and r.stdout:
-                    import io
                     img = Image.open(io.BytesIO(r.stdout)).convert('RGB')
                     max_dim = 1200
                     if img.width > max_dim or img.height > max_dim:
@@ -512,7 +509,6 @@ class DisplayGroup(Adw.PreferencesGroup):
         if not crop:
             return None
         # get original video dimensions
-        import subprocess
         try:
             r = subprocess.run([
                 'ffprobe', '-v', 'error', '-select_streams', 'v:0',
