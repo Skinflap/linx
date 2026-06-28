@@ -13,7 +13,7 @@ fps = 30
 [ambilight]
 enabled = false
 
-# [service]
-# mode = "matrix"        # default mode for systemd service
-# file = ""              # file path for play/image modes
-# color = "red"          # color for color mode
+[service]
+mode = "matrix"          # systemd-service mode: matrix | play | image | color
+file = ""                # file path for play/image modes
+color = "red"            # color for color mode

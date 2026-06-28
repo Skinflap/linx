@@ -27,6 +27,33 @@ from .wake import wake_from_desktop
 
 log = get_logger(__name__)
 
+SERVICE_MODES = ('matrix', 'play', 'image', 'color')
+
+
+def service_argv(config):
+    """translate the [service] config block into the argv the daemon should run.
+
+    the systemd unit invokes `linx service`; this resolves [service].mode into the
+    concrete play command so the exact same code path runs as a direct invocation.
+    exits 2 on a misconfigured block so a broken unit fails loudly, not silently.
+    """
+    svc = config['service']
+    mode = svc['mode']
+    if mode not in SERVICE_MODES:
+        print(f"Invalid [service].mode: {mode!r} (expected one of {', '.join(SERVICE_MODES)})",
+              file=sys.stderr)
+        sys.exit(2)
+    argv = [mode]
+    if mode in ('play', 'image'):
+        if not svc['file']:
+            print(f"[service].mode = {mode!r} requires [service].file to be set",
+                  file=sys.stderr)
+            sys.exit(2)
+        argv.append(svc['file'])
+    elif mode == 'color':
+        argv.append(svc['color'])
+    return argv
+
 
 def main():
     config = load_config()
@@ -97,6 +124,9 @@ Examples:
     p.add_argument('file', help='Local file to upload')
     p.add_argument('target', help='Device path (e.g. /usr/data/boot.jpg)')
 
+    sub.add_parser('service',
+                   help='Run the configured [service].mode (used by linx.service)')
+
     args = parser.parse_args()
     setup_logging(verbose=args.verbose)
     if not args.command:
@@ -106,6 +136,16 @@ Examples:
     # reload config if --config was passed
     if args.config:
         config = load_config(args.config)
+
+    # --<|||service|||>--
+    # `linx service` (the systemd entrypoint) resolves [service].mode into the real
+    # command and re-parses, so the chosen mode runs identically to a direct call.
+    if args.command == 'service':
+        svc_argv = service_argv(config)
+        if args.verbose:
+            svc_argv.insert(0, '--verbose')
+        log.info("service: %s", ' '.join(svc_argv))
+        args = parser.parse_args(svc_argv)
 
     # --<|||led|||>--
     if args.command == 'led':
